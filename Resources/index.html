@@ -380,6 +380,41 @@ var DLJ = (function () {
     };
   }
 
+  // --- Output names live inside each controller's EEPROM image (target.hex), NOT in JobData.xml.
+  // Verified on relay controllers (device code 0x60): a table of 18-byte records, 17 text bytes
+  // (Windows-1255, space-padded) + a 0x00 terminator, starting at offset 0x1507.
+  var NAME_BASE = 0x1507, NAME_STRIDE = 18, NAME_LEN = 17;
+  // A device has this table when the first record's terminator byte is 0x00 (0xFF = other layout).
+  function hasNameTable(img) { return img && img.length >= NAME_BASE + NAME_STRIDE && img[NAME_BASE + NAME_LEN] === 0x00; }
+  function win1255Decode(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) {
+      var b = bytes[i];
+      if (b === 0x00) break;
+      if (b >= 0xE0 && b <= 0xFA) s += String.fromCharCode(0x05D0 + (b - 0xE0)); // Hebrew alef..tav
+      else s += String.fromCharCode(b);
+    }
+    return s.replace(/\s+$/, '');
+  }
+  function win1255Encode(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c >= 0x05D0 && c <= 0x05EA) out.push(0xE0 + (c - 0x05D0));
+      else if (c < 0x100) out.push(c);
+      else out.push(0x3F); // '?' for anything we can't encode
+    }
+    return out;
+  }
+  function readOutputNames(img, count) {
+    var names = [];
+    for (var i = 0; i < count; i++) {
+      var off = NAME_BASE + NAME_STRIDE * i;
+      names.push(win1255Decode(img.subarray(off, off + NAME_LEN)));
+    }
+    return names;
+  }
+
   async function parseDljBuffer(buf, fileName, JSZipLib, DOMParserCls) {
     var Z = JSZipLib || (typeof JSZip !== 'undefined' ? JSZip : null);
     var zip = await Z.loadAsync(buf);
@@ -392,18 +427,19 @@ var DLJ = (function () {
     var err = doc.getElementsByTagName('parsererror');
     if (err && err.length) throw new Error('שגיאה בקריאת ה-XML של הפרויקט.');
     var job = parseJob(doc, fileName);
-    // Device code (byte 0) and box number (byte 2) live in each device's EEPROM image
-    var hexFiles = {};
-    zip.file(/\.source\.hex$/i).forEach(function (h) {
-      var base = h.name.split('/').pop().replace(/\.source\.hex$/i, '').toUpperCase();
-      hexFiles[base] = h;
-    });
+    // Device code (byte 0) and box number (byte 2), plus per-output names, live in the EEPROM image.
+    var srcFiles = {}, tgtFiles = {};
+    zip.file(/\.source\.hex$/i).forEach(function (h) { srcFiles[h.name.split('/').pop().replace(/\.source\.hex$/i, '').toUpperCase()] = h; });
+    zip.file(/\.target\.hex$/i).forEach(function (h) { tgtFiles[h.name.split('/').pop().replace(/\.target\.hex$/i, '').toUpperCase()] = h; });
     for (var duid in job.devices) {
-      var hf = hexFiles[duid];
-      if (!hf) continue;
-      var head = await hf.async('uint8array');
-      job.devices[duid].dcode = head[0];
-      job.devices[duid].box = head[2];
+      var dv = job.devices[duid];
+      var hf = srcFiles[duid];
+      if (hf) { var head = await hf.async('uint8array'); dv.dcode = head[0]; dv.box = head[2]; }
+      var tf = tgtFiles[duid];
+      if (tf && dv.channels) {
+        var img = await tf.async('uint8array');
+        if (hasNameTable(img)) { dv.outNames = readOutputNames(img, dv.channels); dv.nameEditable = true; }
+      }
     }
     return job;
   }
@@ -510,7 +546,35 @@ var DLJ = (function () {
     return applyEdits(buf, [], edits, JSZipLib);
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits };
+  /* Write per-output names into each controller's EEPROM image (target.hex).
+     edits = { "<DUID>": { "<outputIndex>": "name", ... }, ... }  (outputIndex is 0-based)
+     This is the field System Builder's Outputs tab and the hardware actually use. */
+  async function applyOutputNames(buf, edits, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    var changed = 0;
+    for (var duid in edits) {
+      var tf = zip.file('Current/Devices/' + duid + '.target.hex') || zip.file(new RegExp(duid + '\\.target\\.hex$', 'i'))[0];
+      if (!tf) continue;
+      var img = await tf.async('uint8array');
+      if (!hasNameTable(img)) continue; // unknown layout for this device — never write blindly
+      var touched = false;
+      var outs = edits[duid];
+      for (var k in outs) {
+        var i = +k, off = NAME_BASE + NAME_STRIDE * i;
+        if (img[off + NAME_LEN] !== 0x00) continue; // guard: terminator must be where we expect
+        var bytes = win1255Encode(String(outs[k] == null ? '' : outs[k])).slice(0, NAME_LEN);
+        for (var j = 0; j < NAME_LEN; j++) img[off + j] = j < bytes.length ? bytes[j] : 0x20; // space-pad
+        img[off + NAME_LEN] = 0x00; // keep terminator
+        touched = true; changed++;
+      }
+      if (touched) zip.file(tf.name, img);
+    }
+    var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: outBytes, changed: changed };
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
@@ -669,6 +733,7 @@ function setProject(p, buf){
   for(const k in live) delete live[k];
   P.edits = P.edits || {};
   P.reassign = P.reassign || {};
+  P.devNames = P.devNames || {};   // pending per-output names: { duid: { outputIndex: name } }
   store.set('project', P);
   if(buf) idb.put('dlj', buf);
   route = { tab:'areas', area:null };
@@ -864,10 +929,16 @@ function render(){
   $('#hSub').textContent = P ? `${Object.keys(P.areas).length} אזורים · ${P.deviceOrder.length} בקרים` : 'לא נטען פרויקט';
   ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup })[route.tab](m);
 }
+function pendingEditCount(){
+  if(!P) return 0;
+  let n = Object.keys(P.edits||{}).length + Object.keys(P.reassign||{}).length;
+  const d = P.devNames||{}; for(const k in d) n += Object.keys(d[k]).length;
+  return n;
+}
 function editsBanner(){
-  const n = P ? Object.keys(P.edits||{}).length : 0;
+  const n = pendingEditCount();
   if(!n) return '';
-  return `<div class="banner"><span><b>${n}</b> שמות ערוצים שונו ועוד לא נשמרו בקובץ הפרויקט.</span><button class="btn primary" data-save>שמור לקובץ</button></div>`;
+  return `<div class="banner"><span><b>${n}</b> שינויים שלא נשמרו בקובץ הפרויקט.</span><button class="btn primary" data-save>שמור לקובץ</button></div>`;
 }
 document.addEventListener('click', e => { if(e.target.closest('[data-save]')) saveProject(); });
 
@@ -1032,6 +1103,34 @@ function startRenameDevice(aid, cid, cell, duid, pc){
   cell.querySelector('[data-cancel]').onclick = () => done(false);
   inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
 }
+/* Rename a controller output. The name is written into the controller's own memory
+   (target.hex), which is exactly where System Builder's Outputs tab reads it — so it is
+   unique to this output on this controller and shows up on the PC. */
+function startRenameOutput(duid, pc, cell){
+  const dv = P.devices[duid]; if(!dv || !cell) return;
+  const cur = (dv.outNames && dv.outNames[pc]) || '';
+  cell.innerHTML = `<span class="rename"><input value="${esc(cur)}" maxlength="17" aria-label="שם היציאה"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
+  const inp = cell.querySelector('input'); inp.focus(); inp.select();
+  const done = save => {
+    if(save){ const v = inp.value.trim();
+      if(v !== cur){
+        dv.outNames = dv.outNames || [];
+        dv.outNames[pc] = v;
+        P.devNames[duid] = P.devNames[duid] || {};
+        P.devNames[duid][pc] = v;
+        persist();
+        toast('השם עודכן. שמור לקובץ כדי שיופיע גם ב-System Builder.');
+      }
+    }
+    renderDevices($('#main'));
+  };
+  cell.querySelector('[data-ok]').onclick = () => done(true);
+  cell.querySelector('[data-cancel]').onclick = () => done(false);
+  inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
+}
+/* Pending per-output name edits, as DLJ.applyOutputNames expects them. */
+function buildOutputNames(){ return (P && P.devNames) || {}; }
+function hasOutputNameEdits(){ const d=(P&&P.devNames)||{}; for(const k in d){ if(Object.keys(d[k]).length) return true; } return false; }
 /* Assign a single output (duid, physical channel pc) to a chosen Area + Channel,
    like System Builder does — so the name is unique to this controller's output. */
 function startAssignOutput(duid, pc, btn){
@@ -1106,31 +1205,35 @@ function buildMoves(){
     moves.push(mv); }
   return moves;
 }
+/* Apply everything the user changed to a .dlj buffer: controller output names (in the
+   device memory image — what System Builder shows), plus any logical channel renames/moves. */
+async function applyProjectEdits(base){
+  let bytes = base, total = 0;
+  const on = await DLJ.applyOutputNames(bytes, buildOutputNames());
+  bytes = on.bytes; total += on.changed;
+  const le = await DLJ.applyEdits(bytes, buildMoves(), buildChannelNameMap());
+  bytes = le.bytes; total += le.changed;
+  return { bytes, changed: total };
+}
 async function saveProject(){
-  const names = buildChannelNameMap(), moves = buildMoves();
   try{
     toast('מעדכן את קובץ הפרויקט…');
     if(P.source && P.source.dropbox){
-      // Re-download the CURRENT file from Dropbox and apply the changes to it, so a stale
-      // in-memory copy can never cause a silent empty save.
-      const { changed } = await dbxSaveRenames(P.source.dropbox, names, moves);
-      if(changed === 0){
-        toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000);
-        return;
-      }
+      const { changed } = await dbxSaveProject(P.source.dropbox);
+      if(changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000); return; }
       toast(`נשמר ב-Dropbox (${changed} שינויים).`, 6000);
-      P.edits = {}; P.reassign = {}; persist(); render();
+      P.edits = {}; P.reassign = {}; P.devNames = {}; persist(); render();
     } else {
       if(!origDlj) origDlj = await idb.get('dlj');
       if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השינויים יישמרו.', 6000); return; }
-      const res = await DLJ.applyEdits(origDlj, moves, names);
+      const res = await applyProjectEdits(origDlj);
       if(res.changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים).', 7000); return; }
       if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(res.bytes) }); }
       else { const blob = new Blob([res.bytes], { type:'application/octet-stream' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = P.fileName || 'project.dlj'; document.body.appendChild(a); a.click(); a.remove(); }
       toast(`הקובץ המעודכן ירד למכשיר (${res.changed} שינויים).`, 6000);
       origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
-      P.edits = {}; P.reassign = {}; persist(); render();
+      P.edits = {}; P.reassign = {}; P.devNames = {}; persist(); render();
     }
   }catch(e){ toast('השמירה נכשלה: '+e.message, 6000); }
 }
@@ -1162,10 +1265,19 @@ function renderDevices(m){
     for(let n=0;n<dv.channels;n++){
       const targets = map[n] || [];
       const pen = `<svg class="pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>`;
-      const reassigned = P.reassign && P.reassign[dv.duid+':'+n];
-      const t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid), edited=P.edits[aid+':'+cid]!=null;
-        return `<span class="chedit" data-editch="${aid}:${cid}" data-duid="${dv.duid}" data-pc="${n}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${reassigned?' <span class="mod">שויך</span>':''}${pen}</span>`; }).join('<br>');
-      const asg = `<button class="asg" data-assign="${dv.duid}:${n}" title="שייך את היציאה לאזור/ערוץ">⇄ שייך</button>`;
+      // Context: which logical area/channel this output drives (muted, not edited here)
+      const ctx = targets.map(([aid,cid]) => { const ch=findCh(aid,cid);
+        return `${esc(areaName(P.areas[aid]))} › ${esc(ch?chName(ch):'ערוץ '+cid)}`; }).join(' · ');
+      let t;
+      if(dv.nameEditable){
+        const oname = (dv.outNames && dv.outNames[n]) || '';
+        const changed = P.devNames[dv.duid] && P.devNames[dv.duid][n]!=null;
+        t = `<span class="chedit" data-outname="${dv.duid}:${n}" role="button" tabindex="0"><span class="cnm">${esc(oname||'(ללא שם)')}</span>${changed?' <span class="mod">שונה</span>':''}${pen}</span>${ctx?`<br><span class="muted" style="font-size:11px">${ctx}</span>`:''}`;
+      } else {
+        t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid), edited=P.edits[aid+':'+cid]!=null;
+          return `<span class="chedit" data-editch="${aid}:${cid}" data-duid="${dv.duid}" data-pc="${n}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${pen}</span>`; }).join('<br>');
+      }
+      const asg = '';
       let ctl = '';
       if(CAN_PHYS && physArea(dv.dcode) && dv.box!=null){
         const v = (devOut[dv.duid] && devOut[dv.duid][n+1]) || 0, key=`${dv.duid}:${n+1}`;
@@ -1203,7 +1315,7 @@ function renderDevices(m){
   bindFolders(m);
   m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open){ openDevs.add(d.dataset.duid); pollDevice(d.dataset.duid); } else openDevs.delete(d.dataset.duid); }));
   m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid, el, el.dataset.duid, el.dataset.pc!=null?+el.dataset.pc:null); }));
-  m.querySelectorAll('[data-assign]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [duid,pc]=[el.dataset.assign.slice(0,el.dataset.assign.lastIndexOf(':')), +el.dataset.assign.slice(el.dataset.assign.lastIndexOf(':')+1)]; startAssignOutput(duid, pc, el); }));
+  m.querySelectorAll('[data-outname]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const k=el.dataset.outname, i=k.lastIndexOf(':'); startRenameOutput(k.slice(0,i), +k.slice(i+1), el); }));
   m.querySelectorAll('[data-phys]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleOutput(t); }));
   m.querySelectorAll('[data-physsl]').forEach(sl => {
     const [duid,ch]=sl.dataset.physsl.split(':'); const dv=P.devices[duid];
@@ -1247,9 +1359,9 @@ function renderSetup(m){
       <div id="dbxPane" hidden></div>
       ${P ? `<div class="savebox">
         <h2 style="margin-top:4px">שמירה</h2>
-        <div class="note">${Object.keys(P.edits||{}).length ? `<b>${Object.keys(P.edits).length}</b> שינויי שמות שלא נשמרו.` : 'אין שינויים שלא נשמרו.'}</div>
+        <div class="note">${pendingEditCount() ? `<b>${pendingEditCount()}</b> שינויים שלא נשמרו.` : 'אין שינויים שלא נשמרו.'}</div>
         <div class="actions">
-          <button class="btn primary" id="saveCur" ${Object.keys(P.edits||{}).length?'':'disabled'}>${P.source&&P.source.dropbox?'עדכן ב-Dropbox':'שמור לקובץ'}</button>
+          <button class="btn primary" id="saveCur" ${pendingEditCount()?'':'disabled'}>${P.source&&P.source.dropbox?'עדכן ב-Dropbox':'שמור לקובץ'}</button>
           <button class="btn" id="saveAsBtn">שמור כקובץ חדש ל-Dropbox</button>
         </div>
         <div class="sendbar" id="saveAsRow" hidden><input id="saveAsName" placeholder="שם הקובץ החדש" value="${esc(P.name||'DyNet')}"><button class="btn primary" id="saveAsOk">שמור</button></div>
@@ -1303,7 +1415,7 @@ function renderSetup(m){
   $('#saveAsBtn') && $('#saveAsBtn').addEventListener('click', () => { const r=$('#saveAsRow'); if(r){ r.hidden=!r.hidden; if(!r.hidden) $('#saveAsName').focus(); } });
   $('#saveAsOk') && $('#saveAsOk').addEventListener('click', async () => {
     const nm = $('#saveAsName').value.trim(); if(!nm){ toast('הזן שם לקובץ'); return; }
-    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
+    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; P.reassign={}; P.devNames={}; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
     catch(e){ toast(e.message, 6000); }
   });
   $('#scName') && $('#scName').addEventListener('change', e => { cfg.shortcutName = e.target.value.trim() || 'Dynet Send'; saveCfg(); });
@@ -1431,23 +1543,21 @@ async function dbxOpenFile(id, name){
     p.source = { dropbox:id }; setProject(p, buf); toast('נטען: '+name);
   }catch(e){ toast(e.message, 5000); }
 }
-/* Download the live file from Dropbox, apply the moves + channel names to THAT copy,
-   and upload the result (overwrites in place, no backup copy). Returns {changed}. */
-async function dbxSaveRenames(id, names, moves){
+/* Apply all project edits (output names + logical renames) to the in-memory file and
+   upload the result to Dropbox, overwriting in place. Returns {changed}. */
+async function dbxSaveProject(id){
   const meta = await dbxApi('files/get_metadata', { path:id });
   const tok = await dbxToken();
-  // 1. use the in-memory original (fast — avoids a second large transfer and its timeout risk);
-  //    fall back to downloading only if we somehow don't have it.
+  // Use the in-memory original (fast — avoids a second large transfer and its timeout risk);
+  // fall back to downloading only if we somehow don't have it.
   let base = origDlj || await idb.get('dlj');
   if(!base){
     const dr = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path: meta.path_lower || id }) } });
     if(!dr.ok) throw new Error('הורדת הקובץ הנוכחי נכשלה ('+dr.status+')');
     base = await dr.arrayBuffer();
   }
-  // 2. apply the moves + names
-  const res = await DLJ.applyEdits(base, moves || [], names);
+  const res = await applyProjectEdits(base);
   if(res.changed === 0) return { changed:0 };
-  // 3. upload the edited file to the same path (overwrite, no backup copy)
   const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
     'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:res.bytes });
   if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
@@ -1460,7 +1570,7 @@ async function dbxSaveAs(name){
   if(!cfg.dbxKey || !store.get('dbx',null)) throw new Error('התחבר קודם ל-Dropbox.');
   if(!origDlj) origDlj = await idb.get('dlj');
   if(!origDlj) throw new Error('חסר קובץ המקור. פתח את הפרויקט שוב מ-Dropbox או מהטלפון.');
-  const res = await DLJ.applyEdits(origDlj, buildMoves(), buildChannelNameMap());
+  const res = await applyProjectEdits(origDlj);
   let dir = '/DyNet Remote';
   if(P.source && P.source.dropbox){ try{ const meta = await dbxApi('files/get_metadata', { path:P.source.dropbox }); dir = meta.path_display.slice(0, meta.path_display.lastIndexOf('/')); }catch(e){} }
   const fname = name.replace(/[\/\\:*?"<>|]/g,'').replace(/\.dlj$/i,'').trim() || 'DyNet';
