@@ -142,6 +142,8 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;dire
 .chedit .pen{color:var(--muted);flex:none}
 .pchs .rename{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
 .pchs .rename input{flex:1;min-width:110px;border:1px solid var(--accent);background:var(--bg);border-radius:7px;height:32px;padding:0 8px}
+.pchs .rename input.acin{flex:none;min-width:0}
+.pchs .rename label{color:var(--muted)}
 .asg{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;white-space:nowrap;margin-inline-start:4px}
 .asg:active{background:var(--surface)}
 .assign{display:flex;flex-direction:column;gap:6px;padding:6px 0}
@@ -418,6 +420,29 @@ var DLJ = (function () {
     }
     return names;
   }
+  // Per-output Area (16-bit big-endian at 0xA0 + 2i) and Channel (0-based, at 0xB8 + 2i).
+  var AREA_BASE = 0xA0, CHAN_BASE = 0xB8;
+  function readOutputAreas(img, count) {
+    var a = [];
+    for (var i = 0; i < count; i++) a.push((img[AREA_BASE + 2 * i] << 8) | img[AREA_BASE + 2 * i + 1]);
+    return a;
+  }
+  function readOutputChans(img, count) {
+    var c = [];
+    for (var i = 0; i < count; i++) c.push(((img[CHAN_BASE + 2 * i] << 8) | img[CHAN_BASE + 2 * i + 1]) + 1); // show 1-based
+    return c;
+  }
+  // Curtain/blind outputs come in pairs (open+close). System Builder marks the pair in the
+  // per-output checksum table at 0x148: the even output's byte = the odd output's byte + 0x30.
+  // When detected, BOTH outputs of the pair are curtain (shown with a position slider).
+  var CKS_BASE = 0x148;
+  function readCurtains(img, count) {
+    var cur = []; for (var i = 0; i < count; i++) cur.push(false);
+    for (var p = 1; p < count; p += 2) {
+      if (img[CKS_BASE + p] === ((img[CKS_BASE + p - 1] + 0x30) & 0xff)) { cur[p] = true; cur[p - 1] = true; }
+    }
+    return cur;
+  }
 
   async function parseDljBuffer(buf, fileName, JSZipLib, DOMParserCls) {
     var Z = JSZipLib || (typeof JSZip !== 'undefined' ? JSZip : null);
@@ -442,7 +467,13 @@ var DLJ = (function () {
       var tf = tgtFiles[duid];
       if (tf && dv.channels) {
         var img = await tf.async('uint8array');
-        if (hasNameTable(img)) { dv.outNames = readOutputNames(img, dv.channels); dv.nameEditable = true; }
+        if (hasNameTable(img)) {
+          dv.outNames = readOutputNames(img, dv.channels);
+          dv.outArea = readOutputAreas(img, dv.channels);
+          dv.outChan = readOutputChans(img, dv.channels);
+          dv.curtain = readCurtains(img, dv.channels);
+          dv.nameEditable = true;
+        }
       }
     }
     return job;
@@ -550,6 +581,31 @@ var DLJ = (function () {
     return applyEdits(buf, [], edits, JSZipLib);
   }
 
+  /* Write per-output Area + Channel into each controller's EEPROM image (target.hex) — the
+     fields System Builder's Outputs tab reads. acEdits = { "<DUID>": { "<outputIndex>": {area, chan} } }
+     where chan is 1-based (as shown to the user). */
+  async function applyOutputAreaChan(buf, acEdits, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    var changed = 0;
+    for (var duid in acEdits) {
+      var tf = zip.file('Current/Devices/' + duid + '.target.hex') || zip.file(new RegExp(duid + '\\.target\\.hex$', 'i'))[0];
+      if (!tf) continue;
+      var img = await tf.async('uint8array');
+      if (!hasNameTable(img)) continue;
+      var touched = false, outs = acEdits[duid];
+      for (var k in outs) {
+        var i = +k, e = outs[k];
+        if (e.area != null) { var a = e.area & 0xffff; img[AREA_BASE + 2 * i] = (a >> 8) & 0xff; img[AREA_BASE + 2 * i + 1] = a & 0xff; }
+        if (e.chan != null) { var c = (e.chan - 1) & 0xffff; img[CHAN_BASE + 2 * i] = (c >> 8) & 0xff; img[CHAN_BASE + 2 * i + 1] = c & 0xff; }
+        touched = true; changed++;
+      }
+      if (touched) zip.file(tf.name, img);
+    }
+    var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: outBytes, changed: changed };
+  }
+
   /* Write per-output names into each controller's EEPROM image (target.hex).
      edits = { "<DUID>": { "<outputIndex>": "name", ... }, ... }  (outputIndex is 0-based)
      This is the field System Builder's Outputs tab and the hardware actually use. */
@@ -578,7 +634,7 @@ var DLJ = (function () {
     return { bytes: outBytes, changed: changed };
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames };
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
@@ -738,6 +794,7 @@ function setProject(p, buf){
   P.edits = P.edits || {};
   P.reassign = P.reassign || {};
   P.devNames = P.devNames || {};   // pending per-output names: { duid: { outputIndex: name } }
+  P.devAC = P.devAC || {};         // pending per-output area/channel: { duid: { outputIndex: {area, chan} } }
   store.set('project', P);
   if(buf) idb.put('dlj', buf);
   route = { tab:'areas', area:null };
@@ -937,6 +994,7 @@ function pendingEditCount(){
   if(!P) return 0;
   let n = Object.keys(P.edits||{}).length + Object.keys(P.reassign||{}).length;
   const d = P.devNames||{}; for(const k in d) n += Object.keys(d[k]).length;
+  const ac = P.devAC||{}; for(const k in ac) n += Object.keys(ac[k]).length;
   return n;
 }
 function editsBanner(){
@@ -1134,7 +1192,31 @@ function startRenameOutput(duid, pc, cell){
 }
 /* Pending per-output name edits, as DLJ.applyOutputNames expects them. */
 function buildOutputNames(){ return (P && P.devNames) || {}; }
-function hasOutputNameEdits(){ const d=(P&&P.devNames)||{}; for(const k in d){ if(Object.keys(d[k]).length) return true; } return false; }
+function buildAreaChan(){ return (P && P.devAC) || {}; }
+/* Edit a controller output's Area + Channel (written to the controller memory, like System Builder). */
+function startEditAreaChan(duid, pc, cell){
+  const dv = P.devices[duid]; if(!dv || !cell) return;
+  const ar = (dv.outArea && dv.outArea[pc]!=null) ? dv.outArea[pc] : 1;
+  const cn = (dv.outChan && dv.outChan[pc]!=null) ? dv.outChan[pc] : 1;
+  cell.innerHTML = `<span class="rename"><label style="font-size:11px">אזור</label><input class="acin" data-area inputmode="numeric" value="${ar}" style="width:64px"><label style="font-size:11px">ערוץ</label><input class="acin" data-chan inputmode="numeric" value="${cn}" style="width:64px"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
+  const ai = cell.querySelector('[data-area]'), ci = cell.querySelector('[data-chan]'); ai.focus(); ai.select();
+  const done = save => {
+    if(save){ const area = Math.max(0, parseInt(ai.value,10)||0), chan = Math.max(1, parseInt(ci.value,10)||1);
+      if(area !== ar || chan !== cn){
+        dv.outArea = dv.outArea || []; dv.outChan = dv.outChan || [];
+        dv.outArea[pc] = area; dv.outChan[pc] = chan;
+        P.devAC[duid] = P.devAC[duid] || {};
+        P.devAC[duid][pc] = { area, chan };
+        persist();
+        toast('האזור/ערוץ עודכנו. שמור לקובץ כדי שיופיע גם ב-System Builder.');
+      }
+    }
+    renderDevices($('#main'));
+  };
+  cell.querySelector('[data-ok]').onclick = () => done(true);
+  cell.querySelector('[data-cancel]').onclick = () => done(false);
+  cell.querySelectorAll('input').forEach(x => x.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); }));
+}
 /* Assign a single output (duid, physical channel pc) to a chosen Area + Channel,
    like System Builder does — so the name is unique to this controller's output. */
 function startAssignOutput(duid, pc, btn){
@@ -1215,6 +1297,8 @@ async function applyProjectEdits(base){
   let bytes = base, total = 0;
   const on = await DLJ.applyOutputNames(bytes, buildOutputNames());
   bytes = on.bytes; total += on.changed;
+  const ac = await DLJ.applyOutputAreaChan(bytes, buildAreaChan());
+  bytes = ac.bytes; total += ac.changed;
   const le = await DLJ.applyEdits(bytes, buildMoves(), buildChannelNameMap());
   bytes = le.bytes; total += le.changed;
   return { bytes, changed: total };
@@ -1226,7 +1310,7 @@ async function saveProject(){
       const { changed } = await dbxSaveProject(P.source.dropbox);
       if(changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000); return; }
       toast(`נשמר ב-Dropbox (${changed} שינויים).`, 6000);
-      P.edits = {}; P.reassign = {}; P.devNames = {}; persist(); render();
+      P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; persist(); render();
     } else {
       if(!origDlj) origDlj = await idb.get('dlj');
       if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השינויים יישמרו.', 6000); return; }
@@ -1237,7 +1321,7 @@ async function saveProject(){
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = P.fileName || 'project.dlj'; document.body.appendChild(a); a.click(); a.remove(); }
       toast(`הקובץ המעודכן ירד למכשיר (${res.changed} שינויים).`, 6000);
       origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
-      P.edits = {}; P.reassign = {}; P.devNames = {}; persist(); render();
+      P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; persist(); render();
     }
   }catch(e){ toast('השמירה נכשלה: '+e.message, 6000); }
 }
@@ -1276,7 +1360,11 @@ function renderDevices(m){
       if(dv.nameEditable){
         const oname = (dv.outNames && dv.outNames[n]) || '';
         const changed = P.devNames[dv.duid] && P.devNames[dv.duid][n]!=null;
-        t = `<span class="chedit" data-outname="${dv.duid}:${n}" role="button" tabindex="0"><span class="cnm">${esc(oname||'(ללא שם)')}</span>${changed?' <span class="mod">שונה</span>':''}${pen}</span>${ctx?`<br><span class="muted" style="font-size:11px">${ctx}</span>`:''}`;
+        const acChanged = P.devAC[dv.duid] && P.devAC[dv.duid][n]!=null;
+        const ar = (dv.outArea && dv.outArea[n]!=null) ? dv.outArea[n] : '?';
+        const cn = (dv.outChan && dv.outChan[n]!=null) ? dv.outChan[n] : '?';
+        t = `<span class="chedit" data-outname="${dv.duid}:${n}" role="button" tabindex="0"><span class="cnm">${esc(oname||'(ללא שם)')}</span>${changed?' <span class="mod">שונה</span>':''}${pen}</span>`
+          + `<br><span class="chedit" data-outac="${dv.duid}:${n}" role="button" tabindex="0" style="font-size:11px"><span class="muted">אזור ${ar} · ערוץ ${cn}</span>${acChanged?' <span class="mod">שונה</span>':''}${pen}</span>`;
       } else {
         t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid), edited=P.edits[aid+':'+cid]!=null;
           return `<span class="chedit" data-editch="${aid}:${cid}" data-duid="${dv.duid}" data-pc="${n}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${pen}</span>`; }).join('<br>');
@@ -1285,7 +1373,8 @@ function renderDevices(m){
       let ctl = '';
       if(CAN_PHYS && physArea(dv.dcode) && dv.box!=null){
         const v = (devOut[dv.duid] && devOut[dv.duid][n+1]) || 0, key=`${dv.duid}:${n+1}`;
-        ctl = isDimmable(dv.dcode)
+        const slider = isDimmable(dv.dcode) || (dv.curtain && dv.curtain[n]);
+        ctl = slider
           ? `<input type="range" class="physsl" min="0" max="100" value="${v}" data-physsl="${key}" aria-label="יציאה ${n+1}"><span class="physval" data-physval="${key}">${v}%</span>`
           : `<button class="toggle sm" role="switch" aria-checked="${v>0}" data-phys="${key}" aria-label="יציאה ${n+1}"></button>`;
       } else if(targets.length){
@@ -1320,6 +1409,7 @@ function renderDevices(m){
   m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open){ openDevs.add(d.dataset.duid); pollDevice(d.dataset.duid); } else openDevs.delete(d.dataset.duid); }));
   m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid, el, el.dataset.duid, el.dataset.pc!=null?+el.dataset.pc:null); }));
   m.querySelectorAll('[data-outname]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const k=el.dataset.outname, i=k.lastIndexOf(':'); startRenameOutput(k.slice(0,i), +k.slice(i+1), el); }));
+  m.querySelectorAll('[data-outac]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const k=el.dataset.outac, i=k.lastIndexOf(':'); startEditAreaChan(k.slice(0,i), +k.slice(i+1), el); }));
   m.querySelectorAll('[data-phys]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleOutput(t); }));
   m.querySelectorAll('[data-physsl]').forEach(sl => {
     const [duid,ch]=sl.dataset.physsl.split(':'); const dv=P.devices[duid];
@@ -1419,7 +1509,7 @@ function renderSetup(m){
   $('#saveAsBtn') && $('#saveAsBtn').addEventListener('click', () => { const r=$('#saveAsRow'); if(r){ r.hidden=!r.hidden; if(!r.hidden) $('#saveAsName').focus(); } });
   $('#saveAsOk') && $('#saveAsOk').addEventListener('click', async () => {
     const nm = $('#saveAsName').value.trim(); if(!nm){ toast('הזן שם לקובץ'); return; }
-    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; P.reassign={}; P.devNames={}; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
+    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; P.reassign={}; P.devNames={}; P.devAC={}; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
     catch(e){ toast(e.message, 6000); }
   });
   $('#scName') && $('#scName').addEventListener('change', e => { cfg.shortcutName = e.target.value.trim() || 'Dynet Send'; saveCfg(); });
