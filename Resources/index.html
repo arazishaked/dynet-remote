@@ -142,6 +142,12 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;dire
 .chedit .pen{color:var(--muted);flex:none}
 .pchs .rename{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
 .pchs .rename input{flex:1;min-width:110px;border:1px solid var(--accent);background:var(--bg);border-radius:7px;height:32px;padding:0 8px}
+.asg{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;white-space:nowrap;margin-inline-start:4px}
+.asg:active{background:var(--surface)}
+.assign{display:flex;flex-direction:column;gap:6px;padding:6px 0}
+.assign .arow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.assign .asel{flex:1;min-width:120px;border:1px solid var(--accent);background:var(--bg);color:var(--fg);border-radius:7px;height:34px;padding:0 6px}
+.pchs .mod{color:var(--accent);font-size:11px}
 details.dev>summary{list-style:none;cursor:pointer}
 details.dev>summary::-webkit-details-marker{display:none}
 
@@ -402,20 +408,74 @@ var DLJ = (function () {
     return job;
   }
 
-  /* Rename channels inside the original .dlj and return new zip bytes. edits: {"area:channel": "new name"} */
-  async function applyChannelNames(buf, edits, JSZipLib) {
+  function xmlAttrEsc(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function setTagAttr(tag, name, val) {
+    var re = new RegExp('(\\s' + name + '=")[^"]*(")');
+    return re.test(tag) ? tag.replace(re, '$1' + xmlAttrEsc(val) + '$2') : tag.replace(/\s*(\/?)>$/, ' ' + name + '="' + xmlAttrEsc(val) + '"$1>');
+  }
+
+  /* Move a device output (PhysicalChannel) to a different Area/Channel inside the XML text.
+     mv = { duid, pc, toArea, toCh }  — assign to an existing channel, or
+     mv = { duid, pc, toArea, newName } — create a NEW channel in the area and assign to it.
+     Returns the new text (or null if not applied). */
+  function moveOutput(text, mv) {
+    var duidU = String(mv.duid).toUpperCase();
+    var pcEl = '<PhysicalChannel channel="' + mv.pc + '" duid="' + duidU + '"/>';
+    var idx = text.indexOf(pcEl);
+    if (idx < 0) { pcEl = '<PhysicalChannel channel="' + mv.pc + '" duid="' + mv.duid + '"/>'; idx = text.indexOf(pcEl); }
+    if (idx < 0) return null;
+    var rmEnd = idx + pcEl.length; if (text.charAt(rmEnd) === '\n') rmEnd++;
+    text = text.slice(0, idx) + text.slice(rmEnd);
+    // find the target <Area id=toArea> opening tag
+    var areaRe = new RegExp('<Area\\s[^>]*\\sid="' + mv.toArea + '"[^>]*>', 'g'), am, areaTag = null, bodyStart = -1;
+    while ((am = areaRe.exec(text))) { if (am[0].slice(-2) === '/>') continue; areaTag = am[0]; bodyStart = areaRe.lastIndex; break; }
+    if (areaTag == null) return null;
+    var aEnd = text.indexOf('</Area>', bodyStart);
+    if (aEnd < 0) return null;
+    var body = text.slice(bodyStart, aEnd);
+
+    if (mv.newName != null) {
+      // create a new channel at the next free id, assign the output to it
+      var maxId = 0, cm2;
+      var chIdRe = /<Channel\s[^>]*\sid="(\d+)"[^>]*>/g;
+      while ((cm2 = chIdRe.exec(body))) { if (+cm2[1] > maxId) maxId = +cm2[1]; }
+      var newId = maxId + 1;
+      var newCh = '<Channel type="1" name="' + xmlAttrEsc(mv.newName) + '" category="Lighting" user_modified="true" inherited_name="false" id="' + newId + '">\n' + pcEl + '\n</Channel>\n';
+      text = text.slice(0, bodyStart) + '\n' + newCh + text.slice(bodyStart);
+      // bump channel_count on the area tag
+      var newAreaTag = areaTag.replace(/channel_count="(\d+)"/, function (m, n) { return 'channel_count="' + (+n + 1) + '"'; });
+      text = text.slice(0, am.index) + newAreaTag + text.slice(am.index + areaTag.length);
+      // ensure the device is listed in the area
+      var aEnd2 = text.indexOf('</Area>', text.indexOf(newAreaTag));
+      var body2 = text.slice(text.indexOf(newAreaTag), aEnd2);
+      if (body2.indexOf('<Device duid="' + duidU + '"/>') < 0 && body2.indexOf('<Device duid="' + mv.duid + '"/>') < 0) {
+        text = text.slice(0, aEnd2) + '<Device duid="' + duidU + '"/>\n' + text.slice(aEnd2);
+      }
+      return text;
+    }
+
+    // assign to an existing channel: insert the PhysicalChannel right after its opening tag
+    var cm = new RegExp('<Channel\\s[^>]*\\sid="' + mv.toCh + '"[^>]*>').exec(body);
+    if (!cm) return null;
+    var insAt = bodyStart + cm.index + cm[0].length;
+    return text.slice(0, insAt) + '\n' + pcEl + text.slice(insAt);
+  }
+
+  /* Apply structural moves and channel-name edits to a .dlj, return new zip bytes.
+     moves: [{duid, pc, toArea, toCh}]   names: {"area:channel": "new name"} */
+  async function applyEdits(buf, moves, names, JSZipLib) {
     var Z = JSZipLib || JSZip;
     var zip = await Z.loadAsync(buf);
     var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
-    var u8 = await f.async('uint8array');
-    var text = decodeXmlBytes(u8);
-    // Edit the original text in place so everything except the renamed tags stays byte-identical
-    function xmlAttr(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-    function setAttr(tag, name, val) {
-      var re = new RegExp('(\\s' + name + '=")[^"]*(")');
-      return re.test(tag) ? tag.replace(re, '$1' + xmlAttr(val) + '$2') : tag.replace(/\s*(\/?)>$/, ' ' + name + '="' + xmlAttr(val) + '"$1>');
-    }
-    var done = 0, outText = '', pos = 0, areaRe = /<Area\s[^>]*>/g, m;
+    var text = decodeXmlBytes(await f.async('uint8array'));
+    var moved = 0;
+    (moves || []).forEach(function (mv) {
+      var t = moveOutput(text, mv);
+      if (t != null) { text = t; moved++; }
+    });
+    var renamed = 0;
+    names = names || {};
+    var outText = '', pos = 0, areaRe = /<Area\s[^>]*>/g, m;
     while ((m = areaRe.exec(text))) {
       var aid = (/\sid="(\d+)"/.exec(m[0]) || [])[1];
       if (m[0].slice(-2) === '/>') continue;
@@ -424,29 +484,33 @@ var DLJ = (function () {
       var body = text.slice(areaRe.lastIndex, end);
       var nb = body.replace(/<Channel\s[^>]*>/g, function (tag) {
         var cid = (/\sid="(\d+)"/.exec(tag) || [])[1], key = aid + ':' + cid;
-        if (!(key in edits)) return tag;
+        if (!(key in names)) return tag;
         var cur = (/\sname="([^"]*)"/.exec(tag) || [, ''])[1];
-        var want = xmlAttr(edits[key] == null ? '' : edits[key]);
-        if (cur === want) return tag; // already matches — don't touch or re-stamp
-        done++;
-        tag = setAttr(tag, 'name', edits[key] == null ? '' : edits[key]);
-        tag = setAttr(tag, 'user_modified', 'true');
-        return setAttr(tag, 'inherited_name', 'false');
+        var want = xmlAttrEsc(names[key] == null ? '' : names[key]);
+        if (cur === want) return tag;
+        renamed++;
+        tag = setTagAttr(tag, 'name', names[key] == null ? '' : names[key]);
+        tag = setTagAttr(tag, 'user_modified', 'true');
+        return setTagAttr(tag, 'inherited_name', 'false');
       });
       if (nb !== body) { outText += text.slice(pos, areaRe.lastIndex) + nb; pos = end; }
       areaRe.lastIndex = end;
     }
     var xml = outText + text.slice(pos);
-    // Write back as UTF-16LE with BOM, like System Builder does
     var out = new Uint8Array(2 + xml.length * 2);
     out[0] = 0xff; out[1] = 0xfe;
     for (var i = 0; i < xml.length; i++) { var cc = xml.charCodeAt(i); out[2 + i * 2] = cc & 0xff; out[3 + i * 2] = cc >> 8; }
     zip.file(f.name, out);
     var bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-    return { bytes: bytes, changed: done };
+    return { bytes: bytes, changed: renamed + moved, renamed: renamed, moved: moved };
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames };
+  /* Back-compat: rename channels only. */
+  async function applyChannelNames(buf, edits, JSZipLib) {
+    return applyEdits(buf, [], edits, JSZipLib);
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
@@ -604,6 +668,7 @@ function setProject(p, buf){
   P = p; origDlj = buf || null;
   for(const k in live) delete live[k];
   P.edits = P.edits || {};
+  P.reassign = P.reassign || {};
   store.set('project', P);
   if(buf) idb.put('dlj', buf);
   route = { tab:'areas', area:null };
@@ -944,17 +1009,86 @@ function startRename(a, cid){
   span.querySelector('[data-cancel]').onclick = () => done(false);
   inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
 }
-function startRenameDevice(aid, cid, cell){
+function startRenameDevice(aid, cid, cell, duid, pc){
   const ch = findCh(aid, cid); if(!ch || !cell) return;
   cell.innerHTML = `<span class="rename"><input value="${esc(ch.name)}" maxlength="64" aria-label="שם הערוץ"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
   const inp = cell.querySelector('input'); inp.focus(); inp.select();
   const done = save => {
-    if(save){ const v = inp.value.trim(); if(v !== ch.name){ ch.name = v; P.edits[aid+':'+cid] = v; persist(); toast('השם עודכן. שמור לקובץ כדי שיופיע גם ב-System Builder.'); } }
+    if(save){ const v = inp.value.trim();
+      if(v !== ch.name){
+        // A shared channel (more than one output on it) would spread the name to every
+        // controller — so give THIS output its own channel automatically. One output = rename in place.
+        if(duid && pc!=null && ch.phys && ch.phys.length > 1){
+          assignOutputNew(duid, pc, aid, v);
+        } else {
+          ch.name = v; P.edits[aid+':'+cid] = v; persist();
+          toast('השם עודכן. שמור לקובץ כדי שיופיע גם ב-System Builder.');
+        }
+      }
+    }
     renderDevices($('#main'));
   };
   cell.querySelector('[data-ok]').onclick = () => done(true);
   cell.querySelector('[data-cancel]').onclick = () => done(false);
   inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
+}
+/* Assign a single output (duid, physical channel pc) to a chosen Area + Channel,
+   like System Builder does — so the name is unique to this controller's output. */
+function startAssignOutput(duid, pc, btn){
+  const dv = P.devices[duid]; if(!dv) return;
+  const cur = (P.physMap[duid] && P.physMap[duid][pc] && P.physMap[duid][pc][0]) || null;
+  const areaIds = Object.keys(P.areas).map(Number).sort((a,b)=>a-b);
+  const curA = cur ? cur[0] : (areaIds[0]);
+  const areaOpts = areaIds.map(a => `<option value="${a}" ${a===curA?'selected':''}>${a} · ${esc(P.areas[a].name||'ללא שם')}</option>`).join('');
+  const chOpts = a => (P.areas[a]?P.areas[a].channels:[]).slice().sort((x,y)=>x.id-y.id).map(c => `<option value="${c.id}" ${cur&&cur[0]===a&&cur[1]===c.id?'selected':''}>${c.id} · ${esc(c.name||'ללא שם')}</option>`).join('') + `<option value="new">➕ ערוץ חדש…</option>`;
+  const host = btn.closest('.map') || btn.parentNode;
+  host.innerHTML = `<div class="assign">
+    <div class="note" style="font-size:11.5px">שייך את יציאה ${pc+1} של ${esc(dv.name||'')} (Box ${dv.box}):</div>
+    <div class="arow"><select class="asel" data-asel>${areaOpts}</select><select class="asel" data-csel>${chOpts(curA)}</select></div>
+    <div class="arow" data-newrow hidden><input class="asel" data-newname maxlength="64" placeholder="שם הערוץ החדש"></div>
+    <div class="arow"><button class="btn primary" data-aok>שייך</button><button class="btn ghost" data-acancel>ביטול</button></div></div>`;
+  const asel = host.querySelector('[data-asel]'), csel = host.querySelector('[data-csel]'), newRow = host.querySelector('[data-newrow]'), newName = host.querySelector('[data-newname]');
+  const syncNew = () => { const isNew = csel.value==='new'; newRow.hidden = !isNew; if(isNew) newName.focus(); };
+  asel.onclick = e => e.stopPropagation(); csel.onclick = e => e.stopPropagation(); newName.onclick = e => e.stopPropagation();
+  asel.onchange = () => { csel.innerHTML = chOpts(+asel.value); syncNew(); };
+  csel.onchange = syncNew;
+  host.querySelector('[data-acancel]').onclick = e => { e.stopPropagation(); renderDevices($('#main')); };
+  host.querySelector('[data-aok]').onclick = e => {
+    e.stopPropagation();
+    const toA = +asel.value;
+    if(csel.value==='new'){ const nm=(newName.value||'').trim(); if(!nm){ newName.focus(); toast('הזן שם לערוץ החדש.'); return; } assignOutputNew(duid, pc, toA, nm); }
+    else assignOutput(duid, pc, toA, +csel.value);
+    renderDevices($('#main'));
+  };
+}
+/* Assign to an existing channel: update model + record move. */
+function assignOutput(duid, pc, toA, toC){
+  const target = findCh(toA, toC); if(!target){ toast('הערוץ שנבחר לא קיים.'); return; }
+  detachOutput(duid, pc);
+  if(!target.phys.some(p => p[0]===duid && p[1]===pc)) target.phys.push([duid, pc]);
+  P.physMap[duid] = P.physMap[duid] || {};
+  P.physMap[duid][pc] = [[toA, toC]];
+  P.reassign[duid+':'+pc] = { toArea:toA, toCh:toC };
+  persist();
+  toast(`היציאה שויכה ל“${areaName(P.areas[toA])} › ${chName(target)}”. שמור לקובץ כדי שיישמר.`, 5000);
+}
+/* Create a NEW channel in the area and assign the output to it (unique per controller). */
+function assignOutputNew(duid, pc, toA, name){
+  const area = P.areas[toA]; if(!area){ toast('האזור לא קיים.'); return; }
+  const newId = (area.channels||[]).reduce((m,c)=>Math.max(m,c.id), 0) + 1;
+  detachOutput(duid, pc);
+  const ch = { id:newId, name:name, type:1, desc:'', phys:[[duid, pc]] };
+  area.channels.push(ch);
+  P.physMap[duid] = P.physMap[duid] || {};
+  P.physMap[duid][pc] = [[toA, newId]];
+  P.reassign[duid+':'+pc] = { toArea:toA, newName:name };
+  persist();
+  toast(`נוצר ערוץ חדש “${esc(name)}” באזור ${areaName(area)} ושויך ליציאה. שמור לקובץ.`, 5000);
+}
+/* Remove an output from whatever logical channels it currently sits in. */
+function detachOutput(duid, pc){
+  const prev = (P.physMap[duid] && P.physMap[duid][pc]) ? P.physMap[duid][pc].slice() : [];
+  prev.forEach(([aid,cid]) => { const ch=findCh(aid,cid); if(ch) ch.phys = ch.phys.filter(p => !(p[0]===duid && p[1]===pc)); });
 }
 /* Build the full desired channel-name map from what the app currently shows,
    so a save writes the real names even if P.edits was lost across a reload. */
@@ -963,26 +1097,40 @@ function buildChannelNameMap(){
   if(P && P.areas) for(const aid in P.areas){ const a = P.areas[aid]; (a.channels||[]).forEach(ch => { map[a.id+':'+ch.id] = ch.name || ''; }); }
   return map;
 }
+/* Pending output→area moves, as applyEdits expects them. */
+function buildMoves(){
+  const moves = [];
+  const r = (P && P.reassign) || {};
+  for(const key in r){ const i = key.lastIndexOf(':'); const duid = key.slice(0,i), pc = +key.slice(i+1); const mv = { duid, pc, toArea:r[key].toArea };
+    if(r[key].newName!=null) mv.newName = r[key].newName; else mv.toCh = r[key].toCh;
+    moves.push(mv); }
+  return moves;
+}
 async function saveProject(){
-  const names = buildChannelNameMap();
+  const names = buildChannelNameMap(), moves = buildMoves();
   try{
     toast('מעדכן את קובץ הפרויקט…');
     if(P.source && P.source.dropbox){
-      const { changed } = await dbxSaveRenames(P.source.dropbox, names);
-      if(changed === 0){ toast('לא נמצאו שמות לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000); return; }
-      toast(`נשמר ב-Dropbox (${changed} שמות ערוצים עודכנו).`, 6000);
-      P.edits = {}; persist(); render();
+      // Re-download the CURRENT file from Dropbox and apply the changes to it, so a stale
+      // in-memory copy can never cause a silent empty save.
+      const { changed } = await dbxSaveRenames(P.source.dropbox, names, moves);
+      if(changed === 0){
+        toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000);
+        return;
+      }
+      toast(`נשמר ב-Dropbox (${changed} שינויים).`, 6000);
+      P.edits = {}; P.reassign = {}; persist(); render();
     } else {
       if(!origDlj) origDlj = await idb.get('dlj');
-      if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השמות ששינית יישמרו.', 6000); return; }
-      const res = await DLJ.applyChannelNames(origDlj, names);
-      if(res.changed === 0){ toast('לא נמצאו שמות לעדכון בקובץ (ייתכן שכבר עדכניים).', 7000); return; }
+      if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השינויים יישמרו.', 6000); return; }
+      const res = await DLJ.applyEdits(origDlj, moves, names);
+      if(res.changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים).', 7000); return; }
       if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(res.bytes) }); }
       else { const blob = new Blob([res.bytes], { type:'application/octet-stream' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = P.fileName || 'project.dlj'; document.body.appendChild(a); a.click(); a.remove(); }
-      toast(`הקובץ המעודכן ירד למכשיר (${res.changed} שמות ערוצים עודכנו).`, 6000);
+      toast(`הקובץ המעודכן ירד למכשיר (${res.changed} שינויים).`, 6000);
       origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
-      P.edits = {}; persist(); render();
+      P.edits = {}; P.reassign = {}; persist(); render();
     }
   }catch(e){ toast('השמירה נכשלה: '+e.message, 6000); }
 }
@@ -1014,8 +1162,10 @@ function renderDevices(m){
     for(let n=0;n<dv.channels;n++){
       const targets = map[n] || [];
       const pen = `<svg class="pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>`;
+      const reassigned = P.reassign && P.reassign[dv.duid+':'+n];
       const t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid), edited=P.edits[aid+':'+cid]!=null;
-        return `<span class="chedit" data-editch="${aid}:${cid}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${pen}</span>`; }).join('<br>');
+        return `<span class="chedit" data-editch="${aid}:${cid}" data-duid="${dv.duid}" data-pc="${n}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${reassigned?' <span class="mod">שויך</span>':''}${pen}</span>`; }).join('<br>');
+      const asg = `<button class="asg" data-assign="${dv.duid}:${n}" title="שייך את היציאה לאזור/ערוץ">⇄ שייך</button>`;
       let ctl = '';
       if(CAN_PHYS && physArea(dv.dcode) && dv.box!=null){
         const v = (devOut[dv.duid] && devOut[dv.duid][n+1]) || 0, key=`${dv.duid}:${n+1}`;
@@ -1029,7 +1179,7 @@ function renderDevices(m){
           ctl = `<button class="toggle sm" role="switch" aria-checked="${v>0}" data-lout="${aid}:${cid}" aria-label="יציאה ${n+1}"></button>`;
         } else ctl = `<span class="shared">${aid===1 ? 'לא משויך' : 'משותף ×'+(ch?ch.phys.length:'?')}</span>`;
       }
-      rows.push(`<span class="n">${n+1}</span><span class="map">${t || '<span class="muted">לא משויך</span>'}</span><span class="oc">${ctl}</span>`);
+      rows.push(`<span class="n">${n+1}</span><span class="map">${t || '<span class="muted">לא משויך</span>'} ${asg}</span><span class="oc">${ctl}</span>`);
     }
     const meta = [dv.box!=null ? 'Box '+dv.box : '', dv.dcode!=null ? '0x'+hex2(dv.dcode) : '', dv.channels ? dv.channels+' out' : '', dv.fw ? 'FW '+dv.fw : '', dv.serial ? 'S/N '+dv.serial : ''].filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
     return `<details class="dev" data-duid="${dv.duid}" ${(q || openDevs.has(dv.duid))?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>
@@ -1052,7 +1202,8 @@ function renderDevices(m){
   const dq = $('#dq'); if(dq) dq.addEventListener('input', () => { route.devq = dq.value; renderDevices(m); const f=$('#dq'); if(f){ f.focus(); const v=f.value; f.value=''; f.value=v; } });
   bindFolders(m);
   m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open){ openDevs.add(d.dataset.duid); pollDevice(d.dataset.duid); } else openDevs.delete(d.dataset.duid); }));
-  m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid, el); }));
+  m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid, el, el.dataset.duid, el.dataset.pc!=null?+el.dataset.pc:null); }));
+  m.querySelectorAll('[data-assign]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [duid,pc]=[el.dataset.assign.slice(0,el.dataset.assign.lastIndexOf(':')), +el.dataset.assign.slice(el.dataset.assign.lastIndexOf(':')+1)]; startAssignOutput(duid, pc, el); }));
   m.querySelectorAll('[data-phys]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleOutput(t); }));
   m.querySelectorAll('[data-physsl]').forEach(sl => {
     const [duid,ch]=sl.dataset.physsl.split(':'); const dv=P.devices[duid];
@@ -1280,14 +1431,19 @@ async function dbxOpenFile(id, name){
     p.source = { dropbox:id }; setProject(p, buf); toast('נטען: '+name);
   }catch(e){ toast(e.message, 5000); }
 }
-async function dbxSaveRenames(id, names){
+/* Download the live file from Dropbox, apply the moves + channel names to THAT copy,
+   and upload the result (overwrites in place, no backup copy). Returns {changed}. */
+async function dbxSaveRenames(id, names, moves){
   const meta = await dbxApi('files/get_metadata', { path:id });
   const tok = await dbxToken();
+  // 1. download the current bytes (the exact file open in Dropbox)
   const dr = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path: meta.path_lower || id }) } });
   if(!dr.ok) throw new Error('הורדת הקובץ הנוכחי נכשלה ('+dr.status+')');
   const cur = await dr.arrayBuffer();
-  const res = await DLJ.applyChannelNames(cur, names);
+  // 2. apply the moves + names
+  const res = await DLJ.applyEdits(cur, moves || [], names);
   if(res.changed === 0) return { changed:0 };
+  // 3. upload the edited file to the same path (overwrite, no backup copy)
   const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
     'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:res.bytes });
   if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
@@ -1300,7 +1456,7 @@ async function dbxSaveAs(name){
   if(!cfg.dbxKey || !store.get('dbx',null)) throw new Error('התחבר קודם ל-Dropbox.');
   if(!origDlj) origDlj = await idb.get('dlj');
   if(!origDlj) throw new Error('חסר קובץ המקור. פתח את הפרויקט שוב מ-Dropbox או מהטלפון.');
-  const res = await DLJ.applyChannelNames(origDlj, buildChannelNameMap());
+  const res = await DLJ.applyEdits(origDlj, buildMoves(), buildChannelNameMap());
   let dir = '/DyNet Remote';
   if(P.source && P.source.dropbox){ try{ const meta = await dbxApi('files/get_metadata', { path:P.source.dropbox }); dir = meta.path_display.slice(0, meta.path_display.lastIndexOf('/')); }catch(e){} }
   const fname = name.replace(/[\/\\:*?"<>|]/g,'').replace(/\.dlj$/i,'').trim() || 'DyNet';
