@@ -158,7 +158,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let urlStr = m["url"] as? String, let url = URL(string: urlStr) else {
             return ["error": "bad url"]
         }
-        var req = URLRequest(url: url, timeoutInterval: 12)
+        var req = URLRequest(url: url, timeoutInterval: 60)
         req.httpMethod = m["method"] as? String ?? "GET"
         if let h = m["headers"] as? [String: String] { for (k, v) in h { req.setValue(v, forHTTPHeaderField: k) } }
         if let b64 = m["bodyB64"] as? String, let d = Data(base64Encoded: b64) { req.httpBody = d }
@@ -176,7 +176,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
             }
             sem.signal()
         }.resume()
-        _ = sem.wait(timeout: .now() + 14)
+        _ = sem.wait(timeout: .now() + 65)
         return out
     }
 

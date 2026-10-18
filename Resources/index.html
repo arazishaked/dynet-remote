@@ -1436,12 +1436,16 @@ async function dbxOpenFile(id, name){
 async function dbxSaveRenames(id, names, moves){
   const meta = await dbxApi('files/get_metadata', { path:id });
   const tok = await dbxToken();
-  // 1. download the current bytes (the exact file open in Dropbox)
-  const dr = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path: meta.path_lower || id }) } });
-  if(!dr.ok) throw new Error('הורדת הקובץ הנוכחי נכשלה ('+dr.status+')');
-  const cur = await dr.arrayBuffer();
+  // 1. use the in-memory original (fast — avoids a second large transfer and its timeout risk);
+  //    fall back to downloading only if we somehow don't have it.
+  let base = origDlj || await idb.get('dlj');
+  if(!base){
+    const dr = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path: meta.path_lower || id }) } });
+    if(!dr.ok) throw new Error('הורדת הקובץ הנוכחי נכשלה ('+dr.status+')');
+    base = await dr.arrayBuffer();
+  }
   // 2. apply the moves + names
-  const res = await DLJ.applyEdits(cur, moves || [], names);
+  const res = await DLJ.applyEdits(base, moves || [], names);
   if(res.changed === 0) return { changed:0 };
   // 3. upload the edited file to the same path (overwrite, no backup copy)
   const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
