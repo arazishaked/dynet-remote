@@ -1222,7 +1222,11 @@ async function dbxBrowse(path){
     let res = await dbxApi('files/list_folder', { path, limit:500 }), entries = res.entries;
     while(res.has_more){ res = await dbxApi('files/list_folder/continue', { cursor:res.cursor }); entries = entries.concat(res.entries); }
     entries = entries.filter(e => e['.tag']==='folder' || /\.dlj$/i.test(e.name));
-    entries.sort((a,b)=> (a['.tag']===b['.tag'] ? a.name.localeCompare(b.name,'he') : a['.tag']==='folder'?-1:1));
+    entries.sort((a,b)=>{
+      if(a['.tag']!==b['.tag']) return a['.tag']==='folder'?-1:1;
+      if(a['.tag']==='folder') return a.name.localeCompare(b.name,'he');
+      return (b.server_modified||'').localeCompare(a.server_modified||'');
+    });
     const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
     pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <input id="dbxq" type="search" placeholder="חיפוש קובץ DLJ בכל Dropbox" autocomplete="off"></div>
