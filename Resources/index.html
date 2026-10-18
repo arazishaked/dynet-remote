@@ -383,7 +383,11 @@ var DLJ = (function () {
   // --- Output names live inside each controller's EEPROM image (target.hex), NOT in JobData.xml.
   // Verified on relay controllers (device code 0x60): a table of 18-byte records, 17 text bytes
   // (Windows-1255, space-padded) + a 0x00 terminator, starting at offset 0x1507.
-  var NAME_BASE = 0x1507, NAME_STRIDE = 18, NAME_LEN = 17;
+  // The table is organised in blocks of 6 names: each block is a 7-byte header + 6 × 18-byte
+  // records (17 text bytes + a 0x00 terminator). So consecutive names are 18 bytes apart, but
+  // every 6th name jumps an extra 7 bytes for the next block header.
+  var NAME_BASE = 0x1507, NAME_STRIDE = 18, NAME_LEN = 17, NAME_PER_BLOCK = 6, NAME_BLOCK = 115;
+  function nameOffset(i) { return NAME_BASE + Math.floor(i / NAME_PER_BLOCK) * NAME_BLOCK + (i % NAME_PER_BLOCK) * NAME_STRIDE; }
   // A device has this table when the first record's terminator byte is 0x00 (0xFF = other layout).
   function hasNameTable(img) { return img && img.length >= NAME_BASE + NAME_STRIDE && img[NAME_BASE + NAME_LEN] === 0x00; }
   function win1255Decode(bytes) {
@@ -409,7 +413,7 @@ var DLJ = (function () {
   function readOutputNames(img, count) {
     var names = [];
     for (var i = 0; i < count; i++) {
-      var off = NAME_BASE + NAME_STRIDE * i;
+      var off = nameOffset(i);
       names.push(win1255Decode(img.subarray(off, off + NAME_LEN)));
     }
     return names;
@@ -561,7 +565,7 @@ var DLJ = (function () {
       var touched = false;
       var outs = edits[duid];
       for (var k in outs) {
-        var i = +k, off = NAME_BASE + NAME_STRIDE * i;
+        var i = +k, off = nameOffset(i);
         if (img[off + NAME_LEN] !== 0x00) continue; // guard: terminator must be where we expect
         var bytes = win1255Encode(String(outs[k] == null ? '' : outs[k])).slice(0, NAME_LEN);
         for (var j = 0; j < NAME_LEN; j++) img[off + j] = j < bytes.length ? bytes[j] : 0x20; // space-pad
