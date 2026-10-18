@@ -136,7 +136,12 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;dire
 .pchs .map{min-width:0}
 .pchs .oc{display:flex;align-items:center;gap:6px}
 .pchs .n{font-family:var(--mono);color:var(--muted);text-align:end}
-.pchs a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+.chedit{display:inline-flex;align-items:center;gap:3px;cursor:pointer;border-radius:6px;padding:1px 3px}
+.chedit:active{background:var(--surface-2)}
+.chedit .cnm{color:var(--fg);border-bottom:1px dotted var(--muted)}
+.chedit .pen{color:var(--muted);flex:none}
+.pchs .rename{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.pchs .rename input{flex:1;min-width:110px;border:1px solid var(--accent);background:var(--bg);border-radius:7px;height:32px;padding:0 8px}
 details.dev>summary{list-style:none;cursor:pointer}
 details.dev>summary::-webkit-details-marker{display:none}
 
@@ -763,6 +768,7 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden && lin
 let route = { tab:'areas', area:null };
 let dbxAwaitingCode = false;
 const openFolders = new Set(store.get('openFolders', []));
+const openDevs = new Set();
 function go(r){ if(r.tab!=='setup') dbxAwaitingCode = false; route = Object.assign({ area:null }, r); render(); window.scrollTo(0,0); }
 
 function render(){
@@ -920,6 +926,19 @@ function startRename(a, cid){
   span.querySelector('[data-cancel]').onclick = () => done(false);
   inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
 }
+function startRenameDevice(aid, cid){
+  const ch = findCh(aid, cid); if(!ch) return;
+  const cell = document.querySelector(`[data-editch="${aid}:${cid}"]`); if(!cell) return;
+  cell.innerHTML = `<span class="rename"><input value="${esc(ch.name)}" maxlength="64" aria-label="שם הערוץ"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
+  const inp = cell.querySelector('input'); inp.focus(); inp.select();
+  const done = save => {
+    if(save){ const v = inp.value.trim(); if(v !== ch.name){ ch.name = v; P.edits[aid+':'+cid] = v; persist(); toast('השם עודכן. שמור לקובץ כדי שיופיע גם ב-System Builder.'); } }
+    renderDevices($('#main'));
+  };
+  cell.querySelector('[data-ok]').onclick = () => done(true);
+  cell.querySelector('[data-cancel]').onclick = () => done(false);
+  inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
+}
 async function saveProject(){
   const edits = P.edits || {}; const n = Object.keys(edits).length; if(!n) return;
   if(!origDlj) origDlj = await idb.get('dlj');
@@ -954,7 +973,9 @@ function renderDevices(m){
     const map = P.physMap[dv.duid] || {}, rows = [];
     for(let n=0;n<dv.channels;n++){
       const targets = map[n] || [];
-      const t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid); return `<a href="#" data-goarea="${aid}">${esc(areaName(P.areas[aid]))} › ${esc(ch?chName(ch):'ערוץ '+cid)}</a>`; }).join(' , ');
+      const pen = `<svg class="pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>`;
+      const t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid), edited=P.edits[aid+':'+cid]!=null;
+        return `<span class="chedit" data-editch="${aid}:${cid}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${pen}</span>`; }).join('<br>');
       let ctl = '';
       if(CAN_PHYS && physArea(dv.dcode) && dv.box!=null){
         const v = devOut[dv.duid] && devOut[dv.duid][n+1];
@@ -969,7 +990,7 @@ function renderDevices(m){
       rows.push(`<span class="n">${n+1}</span><span class="map">${t || '<span class="muted">לא משויך</span>'}</span><span class="oc">${ctl}</span>`);
     }
     const meta = [dv.box!=null ? 'Box '+dv.box : '', dv.dcode!=null ? '0x'+hex2(dv.dcode) : '', dv.channels ? dv.channels+' out' : '', dv.fw ? 'FW '+dv.fw : '', dv.serial ? 'S/N '+dv.serial : ''].filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
-    return `<details class="dev" data-duid="${dv.duid}"><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>
+    return `<details class="dev" data-duid="${dv.duid}" ${openDevs.has(dv.duid)?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>
       <span class="nm"><div>${esc(dv.name || '(ללא שם)')}</div><div class="dmeta">${meta}</div></span></summary>
       ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}</details>`;
   };
@@ -985,8 +1006,8 @@ function renderDevices(m){
       return `<details class="group" data-k="${esc(k)}" ${openFolders.has(k)?'open':''}><summary>${chev}${esc(loc)}<span class="count">${list.length}</span></summary><div class="rows">${list.map(devHtml).join('')}</div></details>`;
     }).join('')}`;
   bindFolders(m);
-  m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open) pollDevice(d.dataset.duid); }));
-  m.querySelectorAll('[data-goarea]').forEach(x => x.addEventListener('click', e => { e.preventDefault(); go({ tab:'areas', area:+x.dataset.goarea }); }));
+  m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open){ openDevs.add(d.dataset.duid); pollDevice(d.dataset.duid); } else openDevs.delete(d.dataset.duid); }));
+  m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid); }));
   m.querySelectorAll('[data-phys]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleOutput(t); }));
   m.querySelectorAll('[data-lout]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=t.dataset.lout.split(':').map(Number); act(GW.level(aid, cid, t.getAttribute('aria-checked')!=='true' ? 100 : 0, 0)); }));
   $('#stRefresh').addEventListener('click', () => act(GW.deviceStatus().then(() => renderDevices(m))));
@@ -1083,18 +1104,21 @@ function renderSetup(m){
    The app runs on the PDEG over plain HTTP, which Dropbox won't accept as a redirect,
    so it uses Dropbox's "show me a code" flow (PKCE, no redirect). */
 function b64url(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+let dbxVerifierMem = '';
 async function dbxAuthUrl(){
-  // Reuse an existing verifier so a code obtained from an earlier "open" still matches,
-  // even if the page re-rendered while the user was away in Safari.
-  let v = store.get('dbxVerifier', '');
-  if(!v){ v = b64url(crypto.getRandomValues(new Uint8Array(48))); store.set('dbxVerifier', v); }
+  const v = b64url(crypto.getRandomValues(new Uint8Array(48)));
   const ch = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
+  // Persist the verifier and WAIT for it, so it survives a WebView reload while the user is in Safari.
+  // Otherwise the exchange could run with a stale verifier and Dropbox reports "code doesn't exist or has expired".
+  dbxVerifierMem = v;
+  if(NATIVE){ KV['dbxVerifier'] = JSON.stringify(v); await native({ kind:'kvset', key:'dbxVerifier', value:KV['dbxVerifier'] }); }
+  else store.set('dbxVerifier', v);
   const u = new URL('https://www.dropbox.com/oauth2/authorize');
   u.search = new URLSearchParams({ client_id:cfg.dbxKey, response_type:'code', code_challenge:ch, code_challenge_method:'S256', token_access_type:'offline' });
   return u.toString();
 }
 async function dbxExchange(code){
-  const body = new URLSearchParams({ code:code.trim(), grant_type:'authorization_code', client_id:cfg.dbxKey, code_verifier:store.get('dbxVerifier','') });
+  const body = new URLSearchParams({ code:code.trim(), grant_type:'authorization_code', client_id:cfg.dbxKey, code_verifier: dbxVerifierMem || store.get('dbxVerifier','') });
   const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body });
   const j = await r.json(); if(!r.ok) throw new Error(j.error_description || 'הקוד לא התקבל. נסה שוב.');
   store.set('dbx', { access:j.access_token, refresh:j.refresh_token, exp:Date.now()+j.expires_in*1000 }); store.del('dbxVerifier');
@@ -1123,7 +1147,11 @@ async function dbxBrowse(path){
       <div class="sendbar"><input id="dbxCode" placeholder="הדבק את הקוד" autocomplete="off"><button class="btn primary" id="dbxCodeOk">אישור</button></div>`;
     dbxAwaitingCode = true;
     $('#dbxOpenUrl') && ($('#dbxOpenUrl').onclick = () => native({ kind:'open', url }));
-    $('#dbxCodeOk').onclick = async () => { try{ await dbxExchange($('#dbxCode').value); dbxAwaitingCode = false; toast('מחובר ל-Dropbox'); dbxBrowse(''); }catch(e){ toast(e.message, 5000); } };
+    $('#dbxCodeOk').onclick = async (ev) => {
+      const btn = ev.currentTarget; if(btn.disabled) return; btn.disabled = true;
+      try{ await dbxExchange($('#dbxCode').value); dbxAwaitingCode = false; toast('מחובר ל-Dropbox'); dbxBrowse(''); }
+      catch(e){ logPush('err', 'Dropbox: '+e.message); toast(e.message, 6000); btn.disabled = false; }
+    };
     return;
   }
   pane.innerHTML = '<div class="note">טוען תיקייה…</div>';
