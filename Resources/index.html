@@ -1224,12 +1224,31 @@ async function dbxBrowse(path){
     entries = entries.filter(e => e['.tag']==='folder' || /\.dlj$/i.test(e.name));
     entries.sort((a,b)=> (a['.tag']===b['.tag'] ? a.name.localeCompare(b.name,'he') : a['.tag']==='folder'?-1:1));
     const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
-    pane.innerHTML = `<div class="note mono" style="direction:ltr;text-align:left">${esc(path||'/')}</div><div class="dbx-list">
+    pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="dbxq" type="search" placeholder="חיפוש קובץ DLJ בכל Dropbox" autocomplete="off"></div>
+      <div class="note mono" style="direction:ltr;text-align:left">${esc(path||'/')}</div><div class="dbx-list">
       ${up!==null ? `<button data-dir="${esc(up)}">↩ תיקייה למעלה</button>` : ''}
       ${entries.map(e => e['.tag']==='folder' ? `<button data-dir="${esc(e.path_lower)}">📁 ${esc(e.name)}</button>` : `<button data-file="${esc(e.id)}" data-name="${esc(e.name)}">📄 ${esc(e.name)}</button>`).join('') || '<div class="empty">אין כאן קבצי DLJ.</div>'}</div>`;
     pane.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => dbxBrowse(b.dataset.dir));
     pane.querySelectorAll('[data-file]').forEach(b => b.onclick = () => dbxOpenFile(b.dataset.file, b.dataset.name));
+    const sq = $('#dbxq'); if(sq) sq.addEventListener('input', () => { clearTimeout(dbxBrowse._t); const q = sq.value.trim(); dbxBrowse._t = setTimeout(() => q ? dbxSearch(q, path) : dbxBrowse(path), 350); });
   }catch(e){ pane.innerHTML = `<div class="note">${esc(e.message)}</div>`; }
+}
+async function dbxSearch(q, backTo){
+  const pane = $('#dbxPane'); if(!pane) return;
+  try{
+    const res = await dbxApi('files/search_v2', { query:q, options:{ max_results:100, file_status:'active', filename_only:true } });
+    const files = (res.matches||[]).map(m => m.metadata && m.metadata.metadata).filter(md => md && md['.tag']==='file' && /\.dlj$/i.test(md.name));
+    pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="dbxq" type="search" placeholder="חיפוש קובץ DLJ בכל Dropbox" value="${esc(q)}" autocomplete="off"></div>
+      <div class="dbx-list">
+      <button data-back="${esc(backTo)}">↩ חזרה לעיון בתיקיות</button>
+      ${files.map(md => `<button data-file="${esc(md.id)}" data-name="${esc(md.name)}">📄 ${esc(md.name)}<br><span class="note mono" style="direction:ltr;font-size:11px">${esc(md.path_display||'')}</span></button>`).join('') || '<div class="empty">לא נמצאו קבצי DLJ.</div>'}</div>`;
+    pane.querySelectorAll('[data-file]').forEach(b => b.onclick = () => dbxOpenFile(b.dataset.file, b.dataset.name));
+    $('#dbxq').addEventListener('input', e => { clearTimeout(dbxBrowse._t); const v=e.target.value.trim(); dbxBrowse._t=setTimeout(()=> v ? dbxSearch(v, backTo) : dbxBrowse(backTo), 350); });
+    const bk = pane.querySelector('[data-back]'); if(bk) bk.onclick = () => dbxBrowse(backTo);
+    const f=$('#dbxq'); if(f){ f.focus(); const v=f.value; f.value=''; f.value=v; }
+  }catch(e){ pane.innerHTML = `<div class="note">החיפוש נכשל: ${esc(e.message)}</div>`; }
 }
 async function dbxOpenFile(id, name){
   try{
