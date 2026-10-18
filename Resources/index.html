@@ -144,6 +144,10 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;dire
 .pchs .rename input{flex:1;min-width:110px;border:1px solid var(--accent);background:var(--bg);border-radius:7px;height:32px;padding:0 8px}
 .pchs .rename input.acin{flex:none;min-width:0;width:84px}
 .pchs .rename label{color:var(--muted);font-size:11px;align-self:center}
+.modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:24px}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:340px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+.modal-msg{font-size:14.5px;line-height:1.5;margin-bottom:14px}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
 .pchs .rename.acedit{flex-wrap:wrap;gap:6px}
 .pchs .rename .asel{flex:1;min-width:120px;border:1px solid var(--accent);background:var(--bg);color:var(--fg);border-radius:7px;height:32px;padding:0 6px}
 .asg{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;white-space:nowrap;margin-inline-start:4px}
@@ -570,11 +574,30 @@ var DLJ = (function () {
       return text;
     }
 
-    // assign to an existing channel: insert the PhysicalChannel right after its opening tag
+    // assign to an existing channel (optionally renaming it), or create it at the chosen id
     var cm = new RegExp('<Channel\\s[^>]*\\sid="' + mv.toCh + '"[^>]*>').exec(body);
-    if (!cm) return null;
-    var insAt = bodyStart + cm.index + cm[0].length;
-    return text.slice(0, insAt) + '\n' + pcEl + text.slice(insAt);
+    if (cm) {
+      var chStart = bodyStart + cm.index, chTag = cm[0], newTag = chTag;
+      if (mv.name != null && mv.name !== '') {
+        newTag = setTagAttr(setTagAttr(setTagAttr(chTag, 'name', mv.name), 'user_modified', 'true'), 'inherited_name', 'false');
+      }
+      text = text.slice(0, chStart) + newTag + text.slice(chStart + chTag.length);
+      var insAt = chStart + newTag.length;
+      return text.slice(0, insAt) + '\n' + pcEl + text.slice(insAt);
+    }
+    // channel id not present in the area → create it at that exact id
+    var nm = mv.name || '';
+    var newCh2 = '<Channel type="1" name="' + xmlAttrEsc(nm) + '" category="Lighting" user_modified="' + (nm ? 'true' : 'false') + '" inherited_name="' + (nm ? 'false' : 'true') + '" id="' + mv.toCh + '">\n' + pcEl + '\n</Channel>\n';
+    text = text.slice(0, bodyStart) + '\n' + newCh2 + text.slice(bodyStart);
+    var at = text.indexOf(areaTag) < 0 ? -1 : 0;
+    var newAreaTag2 = areaTag.replace(/channel_count="(\d+)"/, function (m, n) { return 'channel_count="' + (+n + 1) + '"'; });
+    text = text.slice(0, am.index) + newAreaTag2 + text.slice(am.index + areaTag.length);
+    var aE = text.indexOf('</Area>', text.indexOf(newAreaTag2));
+    var bd = text.slice(text.indexOf(newAreaTag2), aE);
+    if (bd.indexOf('<Device duid="' + duidU + '"/>') < 0 && bd.indexOf('<Device duid="' + mv.duid + '"/>') < 0) {
+      text = text.slice(0, aE) + '<Device duid="' + duidU + '"/>\n' + text.slice(aE);
+    }
+    return text;
   }
 
   /* Apply structural moves and channel-name edits to a .dlj, return new zip bytes.
@@ -788,6 +811,18 @@ const $ = (s, el=document) => el.querySelector(s);
 const hex2 = n => (n>>>0).toString(16).toUpperCase().padStart(2,'0');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function toast(msg, ms=2800){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true, ms); }
+/* Promise-based yes/no modal. */
+function confirmModal(msg, yes='כן', no='לא'){
+  return new Promise(res => {
+    const ov = document.createElement('div'); ov.className='modal-ov';
+    ov.innerHTML = `<div class="modal"><div class="modal-msg">${esc(msg)}</div><div class="modal-btns"><button class="btn primary" data-yes>${esc(yes)}</button><button class="btn ghost" data-no>${esc(no)}</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = v => { ov.remove(); res(v); };
+    ov.querySelector('[data-yes]').onclick = () => done(true);
+    ov.querySelector('[data-no]').onclick = () => done(false);
+    ov.onclick = e => { if(e.target===ov) done(false); };
+  });
+}
 const onGateway = () => location.protocol==='http:' && /^(\d+\.){3}\d+$|\.local$/.test(location.hostname);
 
 /* ───────── settings ───────── */
@@ -1396,28 +1431,45 @@ function buildMoves(){
 }
 /* Apply everything the user changed to a .dlj buffer: controller output names (in the
    device memory image — what System Builder shows), plus any logical channel renames/moves. */
-async function applyProjectEdits(base){
+/* Build logical moves from the per-output area/channel edits, so the assignment is also
+   written into JobData.xml (the logical channel) with the output's name. */
+function buildACMovesWithNames(){
+  const moves = [];
+  const ac = (P && P.devAC) || {};
+  for(const duid in ac){ const dv = P.devices[duid]; for(const k in ac[duid]){
+    const pc = +k, e = ac[duid][k];
+    const name = (dv && dv.outNames && dv.outNames[pc]) || '';
+    moves.push({ duid, pc, toArea: e.area, toCh: e.chan, name });
+  } }
+  return moves;
+}
+async function applyProjectEdits(base, logicalAC){
   let bytes = base, total = 0;
   const on = await DLJ.applyOutputNames(bytes, buildOutputNames());
   bytes = on.bytes; total += on.changed;
   const ac = await DLJ.applyOutputAreaChan(bytes, buildAreaChan());
   bytes = ac.bytes; total += ac.changed;
-  const le = await DLJ.applyEdits(bytes, buildMoves(), buildChannelNameMap());
+  const moves = buildMoves().concat(logicalAC ? buildACMovesWithNames() : []);
+  const le = await DLJ.applyEdits(bytes, moves, buildChannelNameMap());
   bytes = le.bytes; total += le.changed;
   return { bytes, changed: total };
 }
+function hasACedits(){ const d=(P&&P.devAC)||{}; for(const k in d){ if(Object.keys(d[k]).length) return true; } return false; }
 async function saveProject(){
   try{
+    // When area/channel were changed, offer to also write them into the logical layer (JobData.xml).
+    let logicalAC = false;
+    if(hasACedits()) logicalAC = await confirmModal('שינית אזור/ערוץ של יציאות. האם לשמור אותם גם כערוץ לוגי בבקר (שם + אזור + ערוץ)?');
     toast('מעדכן את קובץ הפרויקט…');
     if(P.source && P.source.dropbox){
-      const { changed } = await dbxSaveProject(P.source.dropbox);
+      const { changed } = await dbxSaveProject(P.source.dropbox, logicalAC);
       if(changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000); return; }
       toast(`נשמר ב-Dropbox (${changed} שינויים).`, 6000);
       P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; persist(); render();
     } else {
       if(!origDlj) origDlj = await idb.get('dlj');
       if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השינויים יישמרו.', 6000); return; }
-      const res = await applyProjectEdits(origDlj);
+      const res = await applyProjectEdits(origDlj, logicalAC);
       if(res.changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים).', 7000); return; }
       if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(res.bytes) }); }
       else { const blob = new Blob([res.bytes], { type:'application/octet-stream' });
@@ -1742,7 +1794,7 @@ async function dbxOpenFile(id, name){
 }
 /* Apply all project edits (output names + logical renames) to the in-memory file and
    upload the result to Dropbox, overwriting in place. Returns {changed}. */
-async function dbxSaveProject(id){
+async function dbxSaveProject(id, logicalAC){
   const meta = await dbxApi('files/get_metadata', { path:id });
   const tok = await dbxToken();
   // Use the in-memory original (fast — avoids a second large transfer and its timeout risk);
@@ -1753,7 +1805,7 @@ async function dbxSaveProject(id){
     if(!dr.ok) throw new Error('הורדת הקובץ הנוכחי נכשלה ('+dr.status+')');
     base = await dr.arrayBuffer();
   }
-  const res = await applyProjectEdits(base);
+  const res = await applyProjectEdits(base, logicalAC);
   if(res.changed === 0) return { changed:0 };
   const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
     'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:res.bytes });
