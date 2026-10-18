@@ -425,8 +425,11 @@ var DLJ = (function () {
       var nb = body.replace(/<Channel\s[^>]*>/g, function (tag) {
         var cid = (/\sid="(\d+)"/.exec(tag) || [])[1], key = aid + ':' + cid;
         if (!(key in edits)) return tag;
+        var cur = (/\sname="([^"]*)"/.exec(tag) || [, ''])[1];
+        var want = xmlAttr(edits[key] == null ? '' : edits[key]);
+        if (cur === want) return tag; // already matches — don't touch or re-stamp
         done++;
-        tag = setAttr(tag, 'name', edits[key]);
+        tag = setAttr(tag, 'name', edits[key] == null ? '' : edits[key]);
         tag = setAttr(tag, 'user_modified', 'true');
         return setAttr(tag, 'inherited_name', 'false');
       });
@@ -953,24 +956,34 @@ function startRenameDevice(aid, cid, cell){
   cell.querySelector('[data-cancel]').onclick = () => done(false);
   inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
 }
+/* Build the full desired channel-name map from what the app currently shows,
+   so a save writes the real names even if P.edits was lost across a reload. */
+function buildChannelNameMap(){
+  const map = {};
+  if(P && P.areas) for(const aid in P.areas){ const a = P.areas[aid]; (a.channels||[]).forEach(ch => { map[a.id+':'+ch.id] = ch.name || ''; }); }
+  return map;
+}
 async function saveProject(){
-  const edits = P.edits || {}; const n = Object.keys(edits).length; if(!n) return;
-  if(!origDlj) origDlj = await idb.get('dlj');
-  if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השמות ששינית יישמרו.', 6000); return; }
+  const names = buildChannelNameMap();
   try{
     toast('מעדכן את קובץ הפרויקט…');
-    const res = await DLJ.applyChannelNames(origDlj, edits);
     if(P.source && P.source.dropbox){
-      const backup = await dbxSaveWithBackup(P.source.dropbox, res.bytes);
-      toast(`נשמר ב-Dropbox (${res.changed} ערוצים). גיבוי: ${backup}`, 6000);
+      const { changed } = await dbxSaveRenames(P.source.dropbox, names);
+      if(changed === 0){ toast('לא נמצאו שמות לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000); return; }
+      toast(`נשמר ב-Dropbox (${changed} שמות ערוצים עודכנו).`, 6000);
+      P.edits = {}; persist(); render();
     } else {
+      if(!origDlj) origDlj = await idb.get('dlj');
+      if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השמות ששינית יישמרו.', 6000); return; }
+      const res = await DLJ.applyChannelNames(origDlj, names);
+      if(res.changed === 0){ toast('לא נמצאו שמות לעדכון בקובץ (ייתכן שכבר עדכניים).', 7000); return; }
       if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(res.bytes) }); }
       else { const blob = new Blob([res.bytes], { type:'application/octet-stream' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = P.fileName || 'project.dlj'; document.body.appendChild(a); a.click(); a.remove(); }
-      toast(`הקובץ המעודכן ירד למכשיר (${res.changed} ערוצים).`, 5000);
+      toast(`הקובץ המעודכן ירד למכשיר (${res.changed} שמות ערוצים עודכנו).`, 6000);
+      origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
+      P.edits = {}; persist(); render();
     }
-    origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
-    P.edits = {}; persist(); render();
   }catch(e){ toast('השמירה נכשלה: '+e.message, 6000); }
 }
 
@@ -1267,26 +1280,27 @@ async function dbxOpenFile(id, name){
     p.source = { dropbox:id }; setProject(p, buf); toast('נטען: '+name);
   }catch(e){ toast(e.message, 5000); }
 }
-async function dbxSaveWithBackup(id, bytes){
+async function dbxSaveRenames(id, names){
   const meta = await dbxApi('files/get_metadata', { path:id });
-  const dir = meta.path_display.slice(0, meta.path_display.lastIndexOf('/'));
-  const d = new Date(), pad = n => String(n).padStart(2,'0');
-  const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const backup = `${dir}/גיבויים/${meta.name.replace(/\.dlj$/i,'')}.${stamp}.dlj`;
-  await dbxApi('files/copy_v2', { from_path:meta.path_display, to_path:backup, autorename:true });
   const tok = await dbxToken();
+  const dr = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path: meta.path_lower || id }) } });
+  if(!dr.ok) throw new Error('הורדת הקובץ הנוכחי נכשלה ('+dr.status+')');
+  const cur = await dr.arrayBuffer();
+  const res = await DLJ.applyChannelNames(cur, names);
+  if(res.changed === 0) return { changed:0 };
   const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
-    'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:bytes });
+    'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:res.bytes });
   if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
   if(!r.ok) throw new Error('העלאה נכשלה ('+r.status+')');
-  return backup.split('/').slice(-2).join('/');
+  origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
+  return { changed: res.changed };
 }
 /* Upload the (edited) project as a NEW .dlj in Dropbox under a chosen name. */
 async function dbxSaveAs(name){
   if(!cfg.dbxKey || !store.get('dbx',null)) throw new Error('התחבר קודם ל-Dropbox.');
   if(!origDlj) origDlj = await idb.get('dlj');
   if(!origDlj) throw new Error('חסר קובץ המקור. פתח את הפרויקט שוב מ-Dropbox או מהטלפון.');
-  const res = await DLJ.applyChannelNames(origDlj, P.edits || {});
+  const res = await DLJ.applyChannelNames(origDlj, buildChannelNameMap());
   let dir = '/DyNet Remote';
   if(P.source && P.source.dropbox){ try{ const meta = await dbxApi('files/get_metadata', { path:P.source.dropbox }); dir = meta.path_display.slice(0, meta.path_display.lastIndexOf('/')); }catch(e){} }
   const fname = name.replace(/[\/\\:*?"<>|]/g,'').replace(/\.dlj$/i,'').trim() || 'DyNet';
