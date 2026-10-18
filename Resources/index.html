@@ -197,6 +197,8 @@ details.dev>summary::-webkit-details-marker{display:none}
 .sdot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--line)}
 .sdot[data-st="online"]{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
 .sdot[data-st="offline"]{background:var(--bad);box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 22%,transparent)}
+.physsl{width:78px;accent-color:var(--accent);direction:ltr;height:26px;flex:none}
+.physval{font-family:var(--mono);font-size:11.5px;color:var(--muted);min-width:34px;text-align:end}
 .toggle.sm{width:44px;height:26px}
 .toggle.sm::after{width:18px;height:18px}
 .toggle.sm[aria-checked="true"]::after{inset-inline-start:21px}
@@ -206,6 +208,12 @@ details.dev>summary::-webkit-details-marker{display:none}
 .sendbar{display:flex;gap:8px}
 .sendbar input{flex:1;min-width:0;direction:ltr;font-family:var(--mono);border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:0 10px;height:40px}
 a.btn{text-decoration:none;color:inherit}
+details.minor{margin:2px 0}
+details.minor>summary{cursor:pointer;color:var(--info);font-size:13px;list-style:none}
+details.minor>summary::-webkit-details-marker{display:none}
+details.minor>summary::before{content:"▸ "}
+details.minor[open]>summary::before{content:"▾ "}
+details.minor .sendbar{margin-top:8px}
 pre.code{direction:ltr;text-align:left;font-family:var(--mono);font-size:11.5px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:220px;overflow:auto;margin:0;white-space:pre}
 .dmeta{display:flex;flex-wrap:wrap;gap:2px 10px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
 .dmeta span{direction:ltr;unicode-bidi:isolate}
@@ -542,9 +550,15 @@ function rawSend(fr, method){
   return native({ kind:'rawPost', host:tcpHost(), port:cfg.tcpPort, bodies, expect: method==='expect' });
 }
 const ASHELL_CMD = `pbpaste | python3 -c "import socket,sys,re,time;t=sys.stdin.read();m=re.search('([0-9.]+):([0-9]+):([0-9A-Fa-f]{16})',t);s=socket.create_connection((m[1],int(m[2])),3);s.sendall(bytes.fromhex(m[3]));time.sleep(0.5);s.close();print('sent',m[3])"`;
-function setOut(duid, ch, pct){ (devOut[duid] = devOut[duid] || {})[ch] = pct; document.querySelectorAll(`[data-phys="${duid}:${ch}"]`).forEach(t => t.setAttribute('aria-checked', pct>0)); }
+function setOut(duid, ch, pct){
+  (devOut[duid] = devOut[duid] || {})[ch] = pct; const key=duid+':'+ch;
+  document.querySelectorAll(`[data-phys="${key}"]`).forEach(t => t.setAttribute('aria-checked', pct>0));
+  document.querySelectorAll(`[data-physsl="${key}"]`).forEach(sl => { if(sl.dataset.drag!=='1') sl.value = pct; });
+  document.querySelectorAll(`[data-physval="${key}"]`).forEach(v => v.textContent = pct+'%');
+}
 const tcpHost = () => { try{ return new URL(cfg.base || 'http://192.168.1.200').hostname; }catch(e){ return '192.168.1.200'; } };
 const physArea = dcode => [0x60,0x65,0x49].includes(dcode);
+const isDimmable = dcode => dcode===0x65 || dcode===0x49;
 /* ───────── DyNet1 frames (raw TCP to the PDEG) ───────── */
 const DyNet = {
   cs(b){ let t=0; for(let i=0;i<7;i++) t+=b[i]; return (-t) & 0xFF; },
@@ -926,9 +940,8 @@ function startRename(a, cid){
   span.querySelector('[data-cancel]').onclick = () => done(false);
   inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
 }
-function startRenameDevice(aid, cid){
-  const ch = findCh(aid, cid); if(!ch) return;
-  const cell = document.querySelector(`[data-editch="${aid}:${cid}"]`); if(!cell) return;
+function startRenameDevice(aid, cid, cell){
+  const ch = findCh(aid, cid); if(!ch || !cell) return;
   cell.innerHTML = `<span class="rename"><input value="${esc(ch.name)}" maxlength="64" aria-label="שם הערוץ"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
   const inp = cell.querySelector('input'); inp.focus(); inp.select();
   const done = save => {
@@ -978,8 +991,10 @@ function renderDevices(m){
         return `<span class="chedit" data-editch="${aid}:${cid}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${pen}</span>`; }).join('<br>');
       let ctl = '';
       if(CAN_PHYS && physArea(dv.dcode) && dv.box!=null){
-        const v = devOut[dv.duid] && devOut[dv.duid][n+1];
-        ctl = `<button class="toggle sm" role="switch" aria-checked="${v>0}" data-phys="${dv.duid}:${n+1}" aria-label="יציאה ${n+1}"></button>`;
+        const v = (devOut[dv.duid] && devOut[dv.duid][n+1]) || 0, key=`${dv.duid}:${n+1}`;
+        ctl = isDimmable(dv.dcode)
+          ? `<input type="range" class="physsl" min="0" max="100" value="${v}" data-physsl="${key}" aria-label="יציאה ${n+1}"><span class="physval" data-physval="${key}">${v}%</span>`
+          : `<button class="toggle sm" role="switch" aria-checked="${v>0}" data-phys="${key}" aria-label="יציאה ${n+1}"></button>`;
       } else if(targets.length){
         const [aid,cid] = targets[0], ch = findCh(aid,cid);
         if(aid!==1 && ch && ch.phys.length===1){
@@ -1007,8 +1022,14 @@ function renderDevices(m){
     }).join('')}`;
   bindFolders(m);
   m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open){ openDevs.add(d.dataset.duid); pollDevice(d.dataset.duid); } else openDevs.delete(d.dataset.duid); }));
-  m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid); }));
+  m.querySelectorAll('[data-editch]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=el.dataset.editch.split(':').map(Number); startRenameDevice(aid, cid, el); }));
   m.querySelectorAll('[data-phys]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleOutput(t); }));
+  m.querySelectorAll('[data-physsl]').forEach(sl => {
+    const [duid,ch]=sl.dataset.physsl.split(':'); const dv=P.devices[duid];
+    sl.addEventListener('click', e=>e.stopPropagation());
+    sl.addEventListener('input', ()=>{ const vl=$(`[data-physval="${sl.dataset.physsl}"]`); if(vl) vl.textContent=sl.value+'%'; });
+    sl.addEventListener('change', ()=>{ act(GW.physical(dv, +ch, +sl.value)); });
+  });
   m.querySelectorAll('[data-lout]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=t.dataset.lout.split(':').map(Number); act(GW.level(aid, cid, t.getAttribute('aria-checked')!=='true' ? 100 : 0, 0)); }));
   $('#stRefresh').addEventListener('click', () => act(GW.deviceStatus().then(() => renderDevices(m))));
   for(const a in live) updateLive(+a);
@@ -1071,6 +1092,10 @@ function renderSetup(m){
       <h2>Dropbox</h2>
       <div class="field"><label for="dbxKey">App key</label><input id="dbxKey" class="ltr" value="${esc(cfg.dbxKey)}" placeholder="xxxxxxxxxxxxxxx" autocomplete="off"></div>
       <div class="note">${store.get('dbx',null) ? 'מחובר ל-Dropbox.' : 'לא מחובר. ההתחברות נעשית בדף של Dropbox עם שם משתמש וסיסמה.'}</div>
+      <details class="minor"><summary>דרך חלופית · הדבקת טוקן ידני</summary>
+        <div class="note">אם ההתחברות הרגילה לא עובדת: בדף Dropbox Settings, תחת <b>Generated access token</b>, לחץ <b>Generate</b>, העתק את הטוקן והדבק כאן. (תקף כ-4 שעות, ואז מפיקים חדש.)</div>
+        <div class="sendbar"><input id="dbxTok" class="ltr" placeholder="sl...." autocomplete="off"><button class="btn primary" id="dbxTokOk">שמור טוקן</button></div>
+      </details>
       <div class="actions"><button class="btn" id="dbxLogout" ${store.get('dbx',null)?'':'disabled'}>התנתק מ-Dropbox</button></div>
     </section>`;
 
@@ -1079,6 +1104,10 @@ function renderSetup(m){
   sync();
   $('#base').addEventListener('change', e => { let v=e.target.value.trim(); if(v && !/^https?:\/\//.test(v)) v='http://'+v; cfg.base=v; e.target.value=v; saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); });
   $('#dbxKey').addEventListener('change', e => { cfg.dbxKey=e.target.value.trim(); saveCfg(); });
+  $('#dbxTokOk') && $('#dbxTokOk').addEventListener('click', () => {
+    const tok = $('#dbxTok').value.trim(); if(!tok){ toast('הדבק טוקן'); return; }
+    store.set('dbx', { access:tok, exp:Date.now()+3.5*3600*1000, manual:true }); toast('הטוקן נשמר. נסה לפתוח מ-Dropbox.'); renderSetup(m);
+  });
   $('#connBtn').addEventListener('click', connect);
   $('#scName') && $('#scName').addEventListener('change', e => { cfg.shortcutName = e.target.value.trim() || 'Dynet Send'; saveCfg(); });
   $('#copyAsh') && $('#copyAsh').addEventListener('click', () => { (navigator.clipboard ? navigator.clipboard.writeText(ASHELL_CMD) : Promise.reject()).then(()=>toast('הפקודה הועתקה'), ()=>{ const r=document.createRange(); r.selectNodeContents($('#ashCmd')); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('סמן והעתק'); }); });
@@ -1125,6 +1154,7 @@ async function dbxExchange(code){
 }
 async function dbxToken(){
   const t = store.get('dbx', null); if(!t) return null;
+  if(t.manual) return t.access;                // token pasted from the console; no refresh
   if(Date.now() < t.exp - 60000) return t.access;
   const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams({ grant_type:'refresh_token', refresh_token:t.refresh, client_id:cfg.dbxKey }) });
   const j = await r.json(); if(!r.ok){ store.del('dbx'); return null; }
