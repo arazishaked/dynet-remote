@@ -208,6 +208,7 @@ details.dev>summary::-webkit-details-marker{display:none}
 .sendbar{display:flex;gap:8px}
 .sendbar input{flex:1;min-width:0;direction:ltr;font-family:var(--mono);border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:0 10px;height:40px}
 a.btn{text-decoration:none;color:inherit}
+.savebox{border-top:1px solid var(--line);margin-top:12px;padding-top:10px;display:flex;flex-direction:column;gap:8px}
 details.minor{margin:2px 0}
 details.minor>summary{cursor:pointer;color:var(--info);font-size:13px;list-style:none}
 details.minor>summary::-webkit-details-marker{display:none}
@@ -1080,6 +1081,15 @@ function renderSetup(m){
         ${NATIVE ? `<button class="btn" id="pickBtn">קובץ מהטלפון</button>` : `<label class="btn"><input type="file" id="fileIn" accept=".dlj" hidden>קובץ מהטלפון</label>`}
       </div>
       <div id="dbxPane" hidden></div>
+      ${P ? `<div class="savebox">
+        <h2 style="margin-top:4px">שמירה</h2>
+        <div class="note">${Object.keys(P.edits||{}).length ? `<b>${Object.keys(P.edits).length}</b> שינויי שמות שלא נשמרו.` : 'אין שינויים שלא נשמרו.'}</div>
+        <div class="actions">
+          <button class="btn primary" id="saveCur" ${Object.keys(P.edits||{}).length?'':'disabled'}>${P.source&&P.source.dropbox?'עדכן ב-Dropbox':'שמור לקובץ'}</button>
+          <button class="btn" id="saveAsBtn">שמור כקובץ חדש ל-Dropbox</button>
+        </div>
+        <div class="sendbar" id="saveAsRow" hidden><input id="saveAsName" placeholder="שם הקובץ החדש" value="${esc((P.name||'DyNet'))} עדכון"><button class="btn primary" id="saveAsOk">שמור</button></div>
+      </div>` : ''}
     </section>
 
     <section class="card">
@@ -1125,6 +1135,13 @@ function renderSetup(m){
     store.set('dbx', { access:tok, exp:Date.now()+3.5*3600*1000, manual:true }); toast('הטוקן נשמר. נסה לפתוח מ-Dropbox.'); renderSetup(m);
   });
   $('#connBtn').addEventListener('click', connect);
+  $('#saveCur') && $('#saveCur').addEventListener('click', () => saveProject());
+  $('#saveAsBtn') && $('#saveAsBtn').addEventListener('click', () => { const r=$('#saveAsRow'); if(r){ r.hidden=!r.hidden; if(!r.hidden) $('#saveAsName').focus(); } });
+  $('#saveAsOk') && $('#saveAsOk').addEventListener('click', async () => {
+    const nm = $('#saveAsName').value.trim(); if(!nm){ toast('הזן שם לקובץ'); return; }
+    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
+    catch(e){ toast(e.message, 6000); }
+  });
   $('#scName') && $('#scName').addEventListener('change', e => { cfg.shortcutName = e.target.value.trim() || 'Dynet Send'; saveCfg(); });
   $('#copyAsh') && $('#copyAsh').addEventListener('click', () => { (navigator.clipboard ? navigator.clipboard.writeText(ASHELL_CMD) : Promise.reject()).then(()=>toast('הפקודה הועתקה'), ()=>{ const r=document.createRange(); r.selectNodeContents($('#ashCmd')); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('סמן והעתק'); }); });
   m.querySelectorAll('input[name=rawm]').forEach(r => r.addEventListener('change', () => { cfg.rawMethod = r.value; saveCfg(); }));
@@ -1238,6 +1255,23 @@ async function dbxSaveWithBackup(id, bytes){
   if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
   if(!r.ok) throw new Error('העלאה נכשלה ('+r.status+')');
   return backup.split('/').slice(-2).join('/');
+}
+/* Upload the (edited) project as a NEW .dlj in Dropbox under a chosen name. */
+async function dbxSaveAs(name){
+  if(!cfg.dbxKey || !store.get('dbx',null)) throw new Error('התחבר קודם ל-Dropbox.');
+  if(!origDlj) origDlj = await idb.get('dlj');
+  if(!origDlj) throw new Error('חסר קובץ המקור. פתח את הפרויקט שוב מ-Dropbox או מהטלפון.');
+  const res = await DLJ.applyChannelNames(origDlj, P.edits || {});
+  let dir = '/DyNet Remote';
+  if(P.source && P.source.dropbox){ try{ const meta = await dbxApi('files/get_metadata', { path:P.source.dropbox }); dir = meta.path_display.slice(0, meta.path_display.lastIndexOf('/')); }catch(e){} }
+  const fname = name.replace(/[\/\\:*?"<>|]/g,'').replace(/\.dlj$/i,'').trim() || 'DyNet';
+  const path = `${dir}/${fname}.dlj`;
+  const tok = await dbxToken();
+  const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
+    'Dropbox-API-Arg': dbxArg({ path, mode:'add', autorename:true }) }, body:res.bytes });
+  if(!r.ok) throw new Error('העלאה נכשלה ('+r.status+')');
+  const j = await r.json();
+  return j.path_display || path;
 }
 
 /* ───────── boot ───────── */
