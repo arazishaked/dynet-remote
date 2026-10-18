@@ -1,0 +1,47 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned archive
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DyNetRemote.xcodeproj \
+            -scheme DyNetRemote \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/DyNetRemote.xcarchive \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            clean archive
+
+      - name: Package IPA
+        run: |
+          APP=$(ls -d build/DyNetRemote.xcarchive/Products/Applications/*.app | head -1)
+          echo "Packaging $APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qr DyNetRemote.ipa Payload
+          ls -la DyNetRemote.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DyNetRemote-ipa
+          path: DyNetRemote.ipa
+          if-no-files-found: error
