@@ -142,8 +142,10 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;dire
 .chedit .pen{color:var(--muted);flex:none}
 .pchs .rename{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
 .pchs .rename input{flex:1;min-width:110px;border:1px solid var(--accent);background:var(--bg);border-radius:7px;height:32px;padding:0 8px}
-.pchs .rename input.acin{flex:none;min-width:0}
-.pchs .rename label{color:var(--muted)}
+.pchs .rename input.acin{flex:none;min-width:0;width:84px}
+.pchs .rename label{color:var(--muted);font-size:11px;align-self:center}
+.pchs .rename.acedit{flex-wrap:wrap;gap:6px}
+.pchs .rename .asel{flex:1;min-width:120px;border:1px solid var(--accent);background:var(--bg);color:var(--fg);border-radius:7px;height:32px;padding:0 6px}
 .asg{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;white-space:nowrap;margin-inline-start:4px}
 .asg:active{background:var(--surface)}
 .assign{display:flex;flex-direction:column;gap:6px;padding:6px 0}
@@ -420,6 +422,39 @@ var DLJ = (function () {
     }
     return names;
   }
+  // Dimmer (0x49) and DALI (0x65) controllers keep names in a variable-length packed blob
+  // instead of the fixed table: "<KEY=VALUE>\0" segments ("D=<dev>", "PCn=<name>", "A<area>=…",
+  // "SN=…") at a self-describing structure (header 80 ?? ?? 00 01 <baseHi> 20). PCn = output n.
+  function findBlob(img) {
+    for (var x = 0x1000; x < img.length - 8; x++) {
+      if (img[x] === 0x80 && img[x + 3] === 0x00 && img[x + 4] === 0x01 && img[x + 6] === 0x20 && (((img[x + 5] << 8) | 0x20) === (x + 0x20))) {
+        return { base: x, overallLenOff: x + 2, blobLenOff: x + 0x22, textStart: x + 0x23 };
+      }
+    }
+    return null;
+  }
+  function parseBlobSegs(img, start) {
+    var segs = [], i = start;
+    while (i < img.length) {
+      var j = i; while (j < img.length && img[j] !== 0x00) j++;
+      var seg = ''; for (var k = i; k < j; k++) seg += String.fromCharCode(img[k]);
+      if (seg.length === 0) break;
+      if (seg.indexOf('=') < 0 || !/^[\x20-\x7e\xa0-\xff]+$/.test(seg)) break;
+      segs.push(seg); i = j + 1;
+    }
+    return { segs: segs, textEnd: i };
+  }
+  function strBytes(s) { var o = []; for (var i = 0; i < s.length; i++) o.push(s.charCodeAt(i) & 0xff); return o; }
+  function readBlobNames(img, count) {
+    var B = findBlob(img); if (!B) return null;
+    var parsed = parseBlobSegs(img, B.textStart);
+    var map = {};
+    parsed.segs.forEach(function (s) { var m = /^PC(\d+)=([\s\S]*)$/.exec(s); if (m) map[+m[1]] = m[2]; });
+    var names = [];
+    for (var i = 0; i < count; i++) names.push(win1255Decode(strBytes(map[i + 1] || '')));
+    return names;
+  }
+
   // Per-output Area (16-bit big-endian at 0xA0 + 2i) and Channel (0-based, at 0xB8 + 2i).
   var AREA_BASE = 0xA0, CHAN_BASE = 0xB8;
   function readOutputAreas(img, count) {
@@ -472,7 +507,17 @@ var DLJ = (function () {
           dv.outArea = readOutputAreas(img, dv.channels);
           dv.outChan = readOutputChans(img, dv.channels);
           dv.curtain = readCurtains(img, dv.channels);
-          dv.nameEditable = true;
+          dv.nameEditable = true;   // fixed-width table (relay) — names + area/channel
+          dv.acEditable = true;
+          dv.nameFormat = 'table';
+        } else {
+          var blobNames = readBlobNames(img, dv.channels);
+          if (blobNames) {
+            dv.outNames = blobNames;
+            dv.nameEditable = true;  // packed blob (dimmer/DALI) — names only for now
+            dv.acEditable = false;
+            dv.nameFormat = 'blob';
+          }
         }
       }
     }
@@ -609,6 +654,34 @@ var DLJ = (function () {
   /* Write per-output names into each controller's EEPROM image (target.hex).
      edits = { "<DUID>": { "<outputIndex>": "name", ... }, ... }  (outputIndex is 0-based)
      This is the field System Builder's Outputs tab and the hardware actually use. */
+  // Edit one PCn= name inside the packed blob (dimmer/DALI). Updates both length bytes and the
+  // parallel flags array. Returns true if written. ff/flags are modified in place.
+  function writeBlobName(img, flags, pcNum, name) {
+    var B = findBlob(img); if (!B) return false;
+    var parsed = parseBlobSegs(img, B.textStart);
+    var oldTextLen = parsed.textEnd - B.textStart, found = false;
+    var ns = parsed.segs.map(function (s) {
+      if (s.indexOf('PC' + pcNum + '=') === 0) { found = true; return 'PC' + pcNum + '=' + win1255AsLatin(name); }
+      return s;
+    });
+    if (!found) return false;
+    var newText = ns.join('\x00') + '\x00';
+    var enc = []; for (var i = 0; i < newText.length; i++) enc.push(newText.charCodeAt(i) & 0xff);
+    var delta = oldTextLen - enc.length; // >0 shrink, <0 grow
+    // capacity guard: don't grow past the blob region (overall length byte is 8-bit here)
+    if (img[B.overallLenOff] - delta > 0xff || img[B.blobLenOff] - delta > 0xff) return false;
+    for (var p = 0; p < enc.length; p++) img[B.textStart + p] = enc[p];
+    img[B.blobLenOff] = img[B.blobLenOff] - delta;
+    img[B.overallLenOff] = img[B.overallLenOff] - delta;
+    if (flags) { // 0x06 per text byte; zero the freed tail when shrinking
+      for (var q = enc.length; q < oldTextLen; q++) flags[B.textStart + q] = 0x00;
+      for (var r = oldTextLen; r < enc.length; r++) flags[B.textStart + r] = 0x06;
+    }
+    return true;
+  }
+  // Encode a JS string to a latin1 string whose char codes are the win1255 bytes.
+  function win1255AsLatin(s) { var b = win1255Encode(String(s == null ? '' : s)), o = ''; for (var i = 0; i < b.length; i++) o += String.fromCharCode(b[i]); return o; }
+
   async function applyOutputNames(buf, edits, JSZipLib) {
     var Z = JSZipLib || JSZip;
     var zip = await Z.loadAsync(buf);
@@ -617,18 +690,27 @@ var DLJ = (function () {
       var tf = zip.file('Current/Devices/' + duid + '.target.hex') || zip.file(new RegExp(duid + '\\.target\\.hex$', 'i'))[0];
       if (!tf) continue;
       var img = await tf.async('uint8array');
-      if (!hasNameTable(img)) continue; // unknown layout for this device — never write blindly
-      var touched = false;
-      var outs = edits[duid];
-      for (var k in outs) {
-        var i = +k, off = nameOffset(i);
-        if (img[off + NAME_LEN] !== 0x00) continue; // guard: terminator must be where we expect
-        var bytes = win1255Encode(String(outs[k] == null ? '' : outs[k])).slice(0, NAME_LEN);
-        for (var j = 0; j < NAME_LEN; j++) img[off + j] = j < bytes.length ? bytes[j] : 0x20; // space-pad
-        img[off + NAME_LEN] = 0x00; // keep terminator
-        touched = true; changed++;
+      var outs = edits[duid], touched = false;
+      if (hasNameTable(img)) {
+        // fixed-width table (relay)
+        for (var k in outs) {
+          var i = +k, off = nameOffset(i);
+          if (img[off + NAME_LEN] !== 0x00) continue;
+          var bytes = win1255Encode(String(outs[k] == null ? '' : outs[k])).slice(0, NAME_LEN);
+          for (var j = 0; j < NAME_LEN; j++) img[off + j] = j < bytes.length ? bytes[j] : 0x20;
+          img[off + NAME_LEN] = 0x00;
+          touched = true; changed++;
+        }
+        if (touched) zip.file(tf.name, img);
+      } else if (findBlob(img)) {
+        // packed blob (dimmer/DALI) — also update the parallel flags file
+        var flf = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
+        var flags = flf ? await flf.async('uint8array') : null;
+        for (var k2 in outs) {
+          if (writeBlobName(img, flags, (+k2) + 1, outs[k2])) { touched = true; changed++; }
+        }
+        if (touched) { zip.file(tf.name, img); if (flf && flags) zip.file(flf.name, flags); }
       }
-      if (touched) zip.file(tf.name, img);
     }
     var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
     return { bytes: outBytes, changed: changed };
@@ -1171,7 +1253,8 @@ function startRenameDevice(aid, cid, cell, duid, pc){
 function startRenameOutput(duid, pc, cell){
   const dv = P.devices[duid]; if(!dv || !cell) return;
   const cur = (dv.outNames && dv.outNames[pc]) || '';
-  cell.innerHTML = `<span class="rename"><input value="${esc(cur)}" maxlength="17" aria-label="שם היציאה"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
+  const maxLen = dv.nameFormat === 'table' ? 17 : 24;
+  cell.innerHTML = `<span class="rename"><input value="${esc(cur)}" maxlength="${maxLen}" aria-label="שם היציאה"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
   const inp = cell.querySelector('input'); inp.focus(); inp.select();
   const done = save => {
     if(save){ const v = inp.value.trim();
@@ -1193,15 +1276,36 @@ function startRenameOutput(duid, pc, cell){
 /* Pending per-output name edits, as DLJ.applyOutputNames expects them. */
 function buildOutputNames(){ return (P && P.devNames) || {}; }
 function buildAreaChan(){ return (P && P.devAC) || {}; }
-/* Edit a controller output's Area + Channel (written to the controller memory, like System Builder). */
+/* Edit a controller output's Area + Channel (written to the controller memory, like System Builder).
+   Shows a list of existing areas (with their numbers) and their channels (with numbers), plus the
+   option to type any area/channel number — including a brand-new channel. */
 function startEditAreaChan(duid, pc, cell){
   const dv = P.devices[duid]; if(!dv || !cell) return;
   const ar = (dv.outArea && dv.outArea[pc]!=null) ? dv.outArea[pc] : 1;
   const cn = (dv.outChan && dv.outChan[pc]!=null) ? dv.outChan[pc] : 1;
-  cell.innerHTML = `<span class="rename"><label style="font-size:11px">אזור</label><input class="acin" data-area inputmode="numeric" value="${ar}" style="width:64px"><label style="font-size:11px">ערוץ</label><input class="acin" data-chan inputmode="numeric" value="${cn}" style="width:64px"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
-  const ai = cell.querySelector('[data-area]'), ci = cell.querySelector('[data-chan]'); ai.focus(); ai.select();
+  const areaIds = Object.keys(P.areas).map(Number).sort((a,b)=>a-b);
+  const knownArea = areaIds.includes(ar);
+  const areaOpts = areaIds.map(a => `<option value="${a}" ${a===ar?'selected':''}>${a} · ${esc(P.areas[a].name||'ללא שם')}</option>`).join('') + `<option value="custom" ${knownArea?'':'selected'}>אחר (הקלד מספר)…</option>`;
+  const chOptsFor = (a, sel) => {
+    const chs = (P.areas[a]?P.areas[a].channels:[]).slice().sort((x,y)=>x.id-y.id);
+    const known = chs.some(c=>c.id===sel);
+    return chs.map(c => `<option value="${c.id}" ${c.id===sel?'selected':''}>${c.id} · ${esc(c.name||'ללא שם')}</option>`).join('') + `<option value="custom" ${known?'':'selected'}>➕ ערוץ חדש (הקלד מספר)…</option>`;
+  };
+  cell.innerHTML = `<span class="rename acedit">
+    <label>אזור</label><select class="asel" data-asel>${areaOpts}</select>
+    <input class="acin" data-acustom inputmode="numeric" placeholder="מס׳ אזור" value="${knownArea?'':ar}" ${knownArea?'hidden':''}>
+    <label>ערוץ</label><select class="asel" data-csel>${chOptsFor(ar, cn)}</select>
+    <input class="acin" data-ccustom inputmode="numeric" placeholder="מס׳ ערוץ" value="${(P.areas[ar]&&P.areas[ar].channels.some(c=>c.id===cn))?'':cn}">
+    <button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
+  const asel=cell.querySelector('[data-asel]'), csel=cell.querySelector('[data-csel]'), acustom=cell.querySelector('[data-acustom]'), ccustom=cell.querySelector('[data-ccustom]');
+  const curArea = () => asel.value==='custom' ? (parseInt(acustom.value,10)||0) : +asel.value;
+  const syncC = () => { ccustom.hidden = csel.value!=='custom'; };
+  const syncA = () => { acustom.hidden = asel.value!=='custom'; const a=curArea(); csel.innerHTML = chOptsFor(a, cn); syncC(); };
+  acustom.hidden = asel.value!=='custom'; syncC();
+  [asel,csel,acustom,ccustom].forEach(x=>x.onclick=e=>e.stopPropagation());
+  asel.onchange = syncA; csel.onchange = syncC; acustom.oninput = () => { csel.innerHTML = chOptsFor(curArea(), cn); syncC(); };
   const done = save => {
-    if(save){ const area = Math.max(0, parseInt(ai.value,10)||0), chan = Math.max(1, parseInt(ci.value,10)||1);
+    if(save){ const area = Math.max(0, curArea()); const chan = Math.max(1, csel.value==='custom' ? (parseInt(ccustom.value,10)||1) : +csel.value);
       if(area !== ar || chan !== cn){
         dv.outArea = dv.outArea || []; dv.outChan = dv.outChan || [];
         dv.outArea[pc] = area; dv.outChan[pc] = chan;
@@ -1215,7 +1319,6 @@ function startEditAreaChan(duid, pc, cell){
   };
   cell.querySelector('[data-ok]').onclick = () => done(true);
   cell.querySelector('[data-cancel]').onclick = () => done(false);
-  cell.querySelectorAll('input').forEach(x => x.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); }));
 }
 /* Assign a single output (duid, physical channel pc) to a chosen Area + Channel,
    like System Builder does — so the name is unique to this controller's output. */
@@ -1364,7 +1467,7 @@ function renderDevices(m){
         const ar = (dv.outArea && dv.outArea[n]!=null) ? dv.outArea[n] : '?';
         const cn = (dv.outChan && dv.outChan[n]!=null) ? dv.outChan[n] : '?';
         t = `<span class="chedit" data-outname="${dv.duid}:${n}" role="button" tabindex="0"><span class="cnm">${esc(oname||'(ללא שם)')}</span>${changed?' <span class="mod">שונה</span>':''}${pen}</span>`
-          + `<br><span class="chedit" data-outac="${dv.duid}:${n}" role="button" tabindex="0" style="font-size:11px"><span class="muted">אזור ${ar} · ערוץ ${cn}</span>${acChanged?' <span class="mod">שונה</span>':''}${pen}</span>`;
+          + (dv.acEditable ? `<br><span class="chedit" data-outac="${dv.duid}:${n}" role="button" tabindex="0" style="font-size:11px"><span class="muted">אזור ${ar} · ערוץ ${cn}</span>${acChanged?' <span class="mod">שונה</span>':''}${pen}</span>` : (ctx?`<br><span class="muted" style="font-size:11px">${ctx}</span>`:''));
       } else {
         t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid), edited=P.edits[aid+':'+cid]!=null;
           return `<span class="chedit" data-editch="${aid}:${cid}" data-duid="${dv.duid}" data-pc="${n}" role="button" tabindex="0"><span class="muted">${esc(areaName(P.areas[aid]))} › </span><span class="cnm" data-cn="${aid}:${cid}">${esc(ch?chName(ch):'ערוץ '+cid)}</span>${edited?' <span class="mod">שונה</span>':''}${pen}</span>`; }).join('<br>');
