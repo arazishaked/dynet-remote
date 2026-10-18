@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}[hidden]{display:none!important}</style>
+</head><body>
+<title>DyNet Remote</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one-column phone console — sticky header, scrolling work area, fixed tab bar. Amber = lamp output. */
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --surface-2:#E2E7EC; --line:#CBD3DB;
+  --fg:#16202A; --muted:#5A6776; --accent:#E39512; --accent-soft:#F7E2BC; --on-accent:#1C1304;
+  --ok:#1D8752; --bad:#C0403A; --info:#2F6FB3;
+  --sans:"IBM Plex Sans Hebrew", "Arial Hebrew", "Segoe UI", system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r:10px; --tab-h:58px;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0E1318; --surface:#151C23; --surface-2:#1D262F; --line:#2A3541;
+  --fg:#E5EAF0; --muted:#8C99A8; --accent:#F2A93B; --accent-soft:#3A2B12; --on-accent:#1C1304;
+  --ok:#3BBE80; --bad:#EE6B61; --info:#6BA6E8; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0E1318; --surface:#151C23; --surface-2:#1D262F; --line:#2A3541;
+  --fg:#E5EAF0; --muted:#8C99A8; --accent:#F2A93B; --accent-soft:#3A2B12; --on-accent:#1C1304;
+  --ok:#3BBE80; --bad:#EE6B61; --info:#6BA6E8; color-scheme:dark }
+
+html{direction:rtl}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.45;-webkit-tap-highlight-color:transparent}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--surface)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+
+.app{max-width:620px;margin:0 auto;min-height:100%;display:flex;flex-direction:column}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line);
+  padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;align-items:center;gap:10px}
+.top .back{border:0;background:var(--surface-2);border-radius:8px;width:34px;height:34px;display:grid;place-items:center;flex:none}
+.top .titles{flex:1;min-width:0}
+.top h1{font-size:17px;font-weight:700;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.link-chip{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:600;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.link-chip[data-s="on"] .dot{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.link-chip[data-s="sim"] .dot{background:var(--info)}
+.link-chip[data-s="wait"] .dot{background:var(--accent);animation:blink 1s infinite}
+.link-chip[data-s="err"] .dot{background:var(--bad)}
+@keyframes blink{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.link-chip[data-s="wait"] .dot{animation:none}}
+
+main{flex:1;padding-block:14px calc(var(--tab-h) + 24px + env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+nav.tabs .in{max-width:620px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);height:var(--tab-h)}
+nav.tabs button{border:0;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11.5px;color:var(--muted);font-weight:500}
+nav.tabs button svg{width:22px;height:22px}
+nav.tabs button[aria-current="page"]{color:var(--fg)}
+nav.tabs button[aria-current="page"] svg{color:var(--accent)}
+
+.search{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:0 12px}
+.search input{border:0;background:none;flex:1;min-width:0;height:42px;outline:none}
+.summary{display:flex;flex-wrap:wrap;gap:6px}
+.pill{font-size:12px;border-radius:999px;padding:3px 10px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.pill b{color:var(--fg);font-weight:600}
+
+/* tree */
+.group{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.group>summary{list-style:none;display:flex;align-items:center;gap:8px;padding:11px 14px;font-weight:600;cursor:pointer}
+.group>summary::-webkit-details-marker{display:none}
+.group>summary .chev{transition:transform .15s;color:var(--muted)}
+.group[open]>summary .chev{transform:rotate(-90deg)}
+.group>summary .count{margin-inline-start:auto;font-size:12px;color:var(--muted);font-weight:500}
+.group .group{border:0;border-top:1px solid var(--line);border-radius:0;background:transparent}
+.group .group>summary{padding-inline-start:26px;font-weight:600;font-size:14px}
+.rows{display:flex;flex-direction:column}
+.row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line);background:none;border-inline:0;border-bottom:0;text-align:start;width:100%}
+.row:active{background:var(--surface-2)}
+.row .nm{flex:1;min-width:0}
+.row .nm div:first-child{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm .meta{font-size:12px;color:var(--muted)}
+.anum{font-family:var(--mono);font-size:12px;font-weight:600;background:var(--surface-2);border-radius:6px;padding:2px 7px;min-width:40px;text-align:center;flex:none}
+.state{font-family:var(--mono);font-size:12px;font-weight:600;border-radius:6px;padding:2px 7px;flex:none;background:var(--accent-soft);color:var(--fg)}
+.state[hidden]{display:none}
+
+/* area screen */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:12px}
+.card h2{font-size:13px;letter-spacing:.04em;color:var(--muted);margin:0;font-weight:600;display:flex;align-items:center;gap:8px}
+.card h2 .sp{flex:1}
+.btn{border:1px solid var(--line);background:var(--surface-2);border-radius:8px;padding:7px 12px;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.ghost{background:none}
+.btn:disabled{opacity:.5;cursor:default}
+.presets{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.pbtn{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}
+.pbtn .pn{font-family:var(--mono);font-weight:600;font-size:16px}
+.pbtn .pl{font-size:11px;color:var(--muted);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.pbtn[aria-pressed="true"] .pl{color:var(--on-accent)}
+.fade{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.seg{display:flex;background:var(--surface-2);border-radius:8px;padding:2px}
+.seg button{border:0;background:none;padding:5px 10px;border-radius:6px;font-family:var(--mono);font-size:12.5px}
+.seg button[aria-pressed="true"]{background:var(--surface);box-shadow:0 1px 2px rgb(0 0 0 / .15);font-weight:600}
+
+.ch{display:flex;flex-direction:column;gap:8px;padding-block:12px;border-top:1px solid var(--line)}
+.ch:first-of-type{border-top:0;padding-top:2px}
+.ch .hd{display:flex;align-items:center;gap:8px}
+.ch .hd .cn{flex:1;min-width:0;font-weight:500}
+.ch .hd .cn small{display:block;font-size:12px;color:var(--muted);font-weight:400}
+.lvl{font-family:var(--mono);font-weight:600;min-width:46px;text-align:end;font-size:14px}
+.lamp{width:12px;height:12px;border-radius:50%;flex:none;background:var(--surface-2);border:1px solid var(--line)}
+.ctrl{display:flex;align-items:center;gap:10px}
+input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;direction:ltr}
+.toggle{position:relative;width:52px;height:30px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);flex:none}
+.toggle::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:22px;height:22px;border-radius:50%;background:var(--surface);box-shadow:0 1px 3px rgb(0 0 0 / .3);transition:inset-inline-start .15s}
+.toggle[aria-checked="true"]{background:var(--accent);border-color:var(--accent)}
+.toggle[aria-checked="true"]::after{inset-inline-start:25px}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{font-size:11.5px;border:1px solid var(--line);border-radius:6px;padding:1px 7px;color:var(--muted);background:none}
+.chip b{color:var(--fg);font-weight:500}
+.desc{font-size:12px;color:var(--muted)}
+.empty{padding:22px 14px;text-align:center;color:var(--muted);font-size:14px}
+
+/* devices */
+.dev .kind{font-size:11px;font-weight:600;border-radius:6px;padding:2px 7px;flex:none;background:var(--surface-2)}
+.dev .kind[data-k="gateway"]{background:color-mix(in srgb,var(--info) 18%,transparent);color:var(--info)}
+.dev .kind[data-k="relay"],.dev .kind[data-k="load"],.dev .kind[data-k="dali"]{background:var(--accent-soft)}
+.pchs{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;padding:4px 14px 12px 14px;font-size:13px;align-items:center}
+.pchs .map{min-width:0}
+.pchs .oc{display:flex;align-items:center;gap:6px}
+.pchs .n{font-family:var(--mono);color:var(--muted);text-align:end}
+.pchs a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+details.dev>summary{list-style:none;cursor:pointer}
+details.dev>summary::-webkit-details-marker{display:none}
+
+/* log */
+.log{font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.log .ln{display:grid;grid-template-columns:auto auto 1fr;gap:4px 10px;padding:7px 12px;border-top:1px solid var(--line);align-items:baseline}
+.log .ln:first-child{border-top:0}
+.log .d{font-weight:600;font-size:10.5px;border-radius:4px;padding:0 5px}
+.log .d.tx{background:var(--accent-soft)}
+.log .d.rx{background:color-mix(in srgb,var(--info) 18%,transparent);color:var(--info)}
+.log .t{color:var(--muted)}
+.log .hex{direction:ltr;text-align:left;white-space:nowrap;overflow-x:auto}
+.log .txt{font-family:var(--sans);font-size:13px;color:var(--fg);min-width:0}
+.log .hex{grid-column:1/-1;color:var(--muted);font-size:11px}
+.log .d.err{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.sendbar{display:flex;gap:8px}
+.sendbar input{flex:1;min-width:0;direction:ltr;font-family:var(--mono);border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:0 10px;height:40px}
+
+/* settings */
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:12.5px;color:var(--muted);font-weight:500}
+.field input,.field select{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:0 10px;height:42px;min-width:0}
+.field input.ltr{direction:ltr;text-align:left;font-family:var(--mono)}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+.note{font-size:12.5px;color:var(--muted);line-height:1.5}
+.note code{font-family:var(--mono);direction:ltr;unicode-bidi:embed;background:var(--surface-2);padding:1px 5px;border-radius:4px;word-break:break-all}
+.radio{display:flex;flex-direction:column;gap:6px}
+.radio label{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg)}
+.radio label:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.radio input{margin-top:4px;accent-color:var(--accent)}
+.radio small{display:block;color:var(--muted);font-size:12px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* project picker */
+.hero{display:flex;flex-direction:column;gap:6px}
+.hero h2{font-size:22px;margin:0;text-wrap:balance}
+.proj{display:flex;align-items:center;gap:12px}
+.proj .ic{width:42px;height:42px;border-radius:10px;background:var(--accent-soft);display:grid;place-items:center;flex:none;font-family:var(--mono);font-weight:600;font-size:12px}
+.dbx-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden;max-height:50vh;overflow-y:auto}
+.dbx-list button{display:flex;gap:10px;align-items:center;border:0;border-top:1px solid var(--line);background:var(--bg);padding:10px 12px;text-align:start}
+.dbx-list button:first-child{border-top:0}
+.dbx-list button:disabled{opacity:.45}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tab-h) + 14px + env(safe-area-inset-bottom,0px));z-index:40;background:var(--fg);color:var(--bg);border-radius:10px;padding:9px 14px;font-size:13.5px;max-width:calc(100% - 32px);box-shadow:0 4px 16px rgb(0 0 0 / .25)}
+
+.banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent);border-radius:var(--r);padding:10px 14px;font-size:13.5px}
+.banner span{flex:1;min-width:180px}
+.icon{border:0;background:none;color:var(--muted);width:32px;height:32px;display:grid;place-items:center;border-radius:8px;flex:none}
+.icon:active{background:var(--surface-2)}
+.mod{font-size:10.5px;font-weight:600;background:var(--accent-soft);border-radius:4px;padding:0 5px}
+.rename{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rename input{flex:1;min-width:120px;border:1px solid var(--accent);background:var(--bg);border-radius:8px;height:36px;padding:0 10px}
+.sdot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--line)}
+.sdot[data-st="online"]{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+.sdot[data-st="offline"]{background:var(--bad);box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 22%,transparent)}
+.toggle.sm{width:44px;height:26px}
+.toggle.sm::after{width:18px;height:18px}
+.toggle.sm[aria-checked="true"]::after{inset-inline-start:21px}
+.shared{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px dashed var(--line);border-radius:5px;padding:0 4px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px}
+.kv span:nth-child(odd){color:var(--muted);font-family:var(--sans)}
+.sendbar{display:flex;gap:8px}
+.sendbar input{flex:1;min-width:0;direction:ltr;font-family:var(--mono);border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:0 10px;height:40px}
+a.btn{text-decoration:none;color:inherit}
+pre.code{direction:ltr;text-align:left;font-family:var(--mono);font-size:11.5px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:220px;overflow:auto;margin:0;white-space:pre}
+.dmeta{display:flex;flex-wrap:wrap;gap:2px 10px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.dmeta span{direction:ltr;unicode-bidi:isolate}
+</style>
+
+<div class="app">
+  <header class="top">
+    <button class="back" id="backBtn" hidden aria-label="חזרה"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+    <div class="titles"><h1 id="hTitle">DyNet Remote</h1><div class="sub" id="hSub"></div></div>
+    <button class="link-chip" id="linkChip" data-s="off"><span class="dot"></span><span id="linkTxt">מנותק</span></button>
+  </header>
+  <main id="main"></main>
+</div>
+<nav class="tabs"><div class="in">
+  <button data-tab="areas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg>אזורים</button>
+  <button data-tab="devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></svg>בקרים</button>
+  <button data-tab="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6l4 4-4 4M10 18h10"/></svg>יומן</button>
+  <button data-tab="setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>פרויקט וחיבור</button>
+</div></nav>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="application/json" id="sampleProject"></script>
+<script>
+/* DLJ parser — reads a Philips Dynalite System Builder job (.dlj = zip with Current/JobData.xml, UTF-16).
+   Uses only basic DOM calls so it runs both in the browser (DOMParser) and in Node (xmldom). */
+var DLJ = (function () {
+  function kids(el, tag) {
+    var out = [];
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 1 && (!tag || n.nodeName === tag)) out.push(n);
+    }
+    return out;
+  }
+  function kid(el, tag) {
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 1 && n.nodeName === tag) return n;
+    }
+    return null;
+  }
+  function path(el) {
+    var c = el;
+    for (var i = 1; i < arguments.length && c; i++) c = kid(c, arguments[i]);
+    return c;
+  }
+  function attr(el, n) {
+    var v = el && el.getAttribute(n);
+    return v == null ? '' : v;
+  }
+
+  function decodeXmlBytes(u8) {
+    if (u8[0] === 0xff && u8[1] === 0xfe) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+    if (u8[0] === 0xfe && u8[1] === 0xff) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+    if (u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) return new TextDecoder('utf-8').decode(u8.subarray(3));
+    if (u8[1] === 0) return new TextDecoder('utf-16le').decode(u8);
+    return new TextDecoder('utf-8').decode(u8);
+  }
+
+  function deviceKind(props, flags, chCount) {
+    if (props['MAC Address']) return 'gateway';
+    if (flags.DALIBallastAttributes) return 'dali';
+    if ('Panel Cover Type' in props) return 'panel';
+    if (flags.CurrentSensorChannels) return 'relay';
+    if (chCount) return 'load';
+    return 'other';
+  }
+
+  function parseJob(doc, fileName) {
+    var root = doc.documentElement;
+    if (!root || root.nodeName !== 'DL4Job') throw new Error('הקובץ אינו פרויקט System Builder (חסר DL4Job).');
+
+    // Physical channel count per device
+    var chCount = {};
+    var pc = path(root, 'NetworkData', 'Network', 'PhysicalChannelCache');
+    if (pc) kids(pc, 'CachedPhysicalChannel').forEach(function (c) {
+      var d = attr(c, 'duid').toUpperCase();
+      chCount[d] = Math.max(chCount[d] || 0, +attr(c, 'channel') + 1);
+    });
+
+    // Devices
+    var devices = {}, order = [];
+    var dd = kid(root, 'DeviceData');
+    (dd ? kids(dd, 'Device') : []).forEach(function (dev) {
+      var duid = attr(dev, 'duid').toUpperCase();
+      var dn = kid(dev, 'DyNetDevice');
+      var props = {}, flags = {}, fw = '';
+      var nmp = dn && kid(dn, 'NonMemoryProperties');
+      (nmp ? kids(nmp, 'Property') : []).forEach(function (p) {
+        kids(p).forEach(function (q) {
+          var t = q.nodeName;
+          if (t === 'FirmwareVersion') fw = attr(q, 'major') + '.' + attr(q, 'minor');
+          else if (q.hasAttribute('name')) props[attr(q, 'name')] = attr(q, 'value');
+          else flags[t] = true;
+        });
+      });
+      var n = chCount[duid] || 0;
+      devices[duid] = {
+        duid: duid,
+        name: (props['Device Name'] || '').trim(),
+        location: (props['Location'] || '').trim(),
+        kind: deviceKind(props, flags, n),
+        fw: fw,
+        serial: props['Serial Number 64'] || '',
+        mac: props['MAC Address'] || '',
+        channels: n
+      };
+      order.push(duid);
+    });
+
+    // Logical network: folders → areas → channels
+    var areas = {}, physMap = {};
+    function readArea(el, folderPath) {
+      var id = +attr(el, 'id');
+      var a = { id: id, name: attr(el, 'name').trim(), path: folderPath, presets: {}, channels: [], devices: [] };
+      kids(el).forEach(function (c) {
+        if (c.nodeName === 'Channel') {
+          var ch = { id: +attr(c, 'id'), name: attr(c, 'name').trim(), type: +attr(c, 'type'), desc: attr(c, 'description').trim(), phys: [] };
+          kids(c, 'PhysicalChannel').forEach(function (p) {
+            var d = attr(p, 'duid').toUpperCase(), num = +attr(p, 'channel');
+            ch.phys.push([d, num]);
+            physMap[d] = physMap[d] || {};
+            physMap[d][num] = physMap[d][num] || [];
+            physMap[d][num].push([id, ch.id]);
+          });
+          a.channels.push(ch);
+        } else if (c.nodeName === 'Preset') {
+          a.presets[attr(c, 'id')] = attr(c, 'name');
+        } else if (c.nodeName === 'Device') {
+          a.devices.push(attr(c, 'duid').toUpperCase());
+        }
+      });
+      a.channels.sort(function (x, y) { return x.id - y.id; });
+      return a;
+    }
+    function walk(f, folderPath) {
+      var node = { type: 'folder', name: attr(f, 'id'), children: [] };
+      kids(f).forEach(function (c) {
+        if (c.nodeName === 'Folder') {
+          var nm = attr(c, 'id');
+          node.children.push(walk(c, folderPath.concat(nm)));
+        } else if (c.nodeName === 'Area') {
+          var a = readArea(c, folderPath);
+          areas[a.id] = a;
+          node.children.push({ type: 'area', id: a.id });
+        }
+      });
+      return node;
+    }
+    var ln = path(root, 'LogicalData', 'LogicalNetwork');
+    var rf = ln && kid(ln, 'Folder');
+    var tree = rf ? walk(rf, []) : { type: 'folder', name: 'Root', children: [] };
+
+    var name = (fileName || 'פרויקט').replace(/\.dlj$/i, '').replace(/^[0-9a-f]{8}-/i, '');
+    return {
+      name: name, fileName: fileName || '', version: attr(root, 'version'), builder: attr(root, 'EPversion'),
+      loadedAt: Date.now(), tree: tree, areas: areas, devices: devices, deviceOrder: order, physMap: physMap
+    };
+  }
+
+  async function parseDljBuffer(buf, fileName, JSZipLib, DOMParserCls) {
+    var Z = JSZipLib || (typeof JSZip !== 'undefined' ? JSZip : null);
+    var zip = await Z.loadAsync(buf);
+    var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    if (!f) throw new Error('לא נמצא JobData.xml בתוך הקובץ. ודא שזה קובץ ‎.dlj‎ של System Builder.');
+    var u8 = await f.async('uint8array');
+    var text = decodeXmlBytes(u8);
+    var P = DOMParserCls || DOMParser;
+    var doc = new P().parseFromString(text, 'text/xml');
+    var err = doc.getElementsByTagName('parsererror');
+    if (err && err.length) throw new Error('שגיאה בקריאת ה-XML של הפרויקט.');
+    var job = parseJob(doc, fileName);
+    // Device code (byte 0) and box number (byte 2) live in each device's EEPROM image
+    var hexFiles = {};
+    zip.file(/\.source\.hex$/i).forEach(function (h) {
+      var base = h.name.split('/').pop().replace(/\.source\.hex$/i, '').toUpperCase();
+      hexFiles[base] = h;
+    });
+    for (var duid in job.devices) {
+      var hf = hexFiles[duid];
+      if (!hf) continue;
+      var head = await hf.async('uint8array');
+      job.devices[duid].dcode = head[0];
+      job.devices[duid].box = head[2];
+    }
+    return job;
+  }
+
+  /* Rename channels inside the original .dlj and return new zip bytes. edits: {"area:channel": "new name"} */
+  async function applyChannelNames(buf, edits, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    var u8 = await f.async('uint8array');
+    var text = decodeXmlBytes(u8);
+    // Edit the original text in place so everything except the renamed tags stays byte-identical
+    function xmlAttr(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+    function setAttr(tag, name, val) {
+      var re = new RegExp('(\\s' + name + '=")[^"]*(")');
+      return re.test(tag) ? tag.replace(re, '$1' + xmlAttr(val) + '$2') : tag.replace(/\s*(\/?)>$/, ' ' + name + '="' + xmlAttr(val) + '"$1>');
+    }
+    var done = 0, outText = '', pos = 0, areaRe = /<Area\s[^>]*>/g, m;
+    while ((m = areaRe.exec(text))) {
+      var aid = (/\sid="(\d+)"/.exec(m[0]) || [])[1];
+      if (m[0].slice(-2) === '/>') continue;
+      var end = text.indexOf('</Area>', areaRe.lastIndex);
+      if (end < 0) break;
+      var body = text.slice(areaRe.lastIndex, end);
+      var nb = body.replace(/<Channel\s[^>]*>/g, function (tag) {
+        var cid = (/\sid="(\d+)"/.exec(tag) || [])[1], key = aid + ':' + cid;
+        if (!(key in edits)) return tag;
+        done++;
+        tag = setAttr(tag, 'name', edits[key]);
+        tag = setAttr(tag, 'user_modified', 'true');
+        return setAttr(tag, 'inherited_name', 'false');
+      });
+      if (nb !== body) { outText += text.slice(pos, areaRe.lastIndex) + nb; pos = end; }
+      areaRe.lastIndex = end;
+    }
+    var xml = outText + text.slice(pos);
+    // Write back as UTF-16LE with BOM, like System Builder does
+    var out = new Uint8Array(2 + xml.length * 2);
+    out[0] = 0xff; out[1] = 0xfe;
+    for (var i = 0; i < xml.length; i++) { var cc = xml.charCodeAt(i); out[2 + i * 2] = cc & 0xff; out[3 + i * 2] = cc >> 8; }
+    zip.file(f.name, out);
+    var bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: bytes, changed: done };
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames };
+})();
+if (typeof module !== 'undefined') module.exports = DLJ;
+
+</script>
+<script>
+"use strict";
+/* ───────── native bridge (Scriptable on iPhone) ─────────
+   Inside Scriptable the page asks the host script to do things a web page can't:
+   plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
+const NATIVE = !!window.__DYNET_NATIVE;
+const HAS_TCP = !!window.__DYNET_TCP;
+// Scriptable can't open a raw socket, but an HTTP POST to the PDEG's DyNet port carries our bytes;
+// the PDEG drops the header part and executes the physical frames that arrive in their own segment.
+// Raw-over-HTTP to port 95 was removed: the PDEG turned the HTTP text into random DyNet commands.
+// In Scriptable, physical frames go through a-Shell (free) via a Shortcut that opens a real TCP socket.
+const VIA_ASHELL = NATIVE && !HAS_TCP;
+const CAN_PHYS = HAS_TCP || VIA_ASHELL;
+const native = window.__DYNET_NATIVE === 'http'
+  ? (msg => fetch('/native', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(msg) }).then(r => r.json()).catch(e => ({ error:String(e) })))
+  : window.__DYNET_NATIVE === 'wk'
+  ? (msg => window.webkit.messageHandlers.dynet.postMessage(msg).then(r => r, e => ({ error:String(e) })))
+  : (() => {
+  const q = [], pend = {}; let waiter = null, seq = 0;
+  window.__nativeNext = cb => {
+    if(q.length) return cb(JSON.stringify(q.shift()));
+    waiter = cb;
+    setTimeout(() => { if(waiter === cb){ waiter = null; cb('null'); } }, 15000);
+  };
+  window.__nativeReply = (id, res) => { const p = pend[id]; delete pend[id]; p && p(res); };
+  return msg => new Promise(res => {
+    msg.id = ++seq; pend[msg.id] = res;
+    if(waiter){ const w = waiter; waiter = null; w(JSON.stringify(msg)); } else q.push(msg);
+  });
+})();
+function u8ToB64(u8){ let s=''; for(let i=0;i<u8.length;i+=0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i+0x8000)); return btoa(s); }
+function b64ToU8(b){ const s=atob(b), u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
+async function xfetch(url, opts={}){
+  if(!NATIVE) return fetch(url, opts);
+  const headers = Object.assign({}, opts.headers||{});
+  let body = opts.body, bodyB64 = null;
+  if(body instanceof Uint8Array || body instanceof ArrayBuffer){ bodyB64 = u8ToB64(new Uint8Array(body)); body = null; }
+  else if(body instanceof URLSearchParams){ body = body.toString(); headers['Content-Type'] = 'application/x-www-form-urlencoded'; }
+  const r = await native({ kind:'http', url, method:opts.method||'GET', headers, body:body||null, bodyB64, binary:!!opts.binary });
+  if(!r || r.error) throw new TypeError('Failed to fetch');
+  return { ok: r.status>=200 && r.status<300, status:r.status, text: async()=> r.text ?? '', json: async()=> JSON.parse(r.text), arrayBuffer: async()=> b64ToU8(r.b64).buffer };
+}
+
+/* ───────── helpers ───────── */
+const KV = window.__KV || {};
+const store = NATIVE ? {
+  get(k, d){ const v = KV[k]; if(v==null) return d; try{ return JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ KV[k] = JSON.stringify(v); native({ kind:'kvset', key:k, value:KV[k] }); },
+  del(k){ delete KV[k]; native({ kind:'kvset', key:k, value:null }); }
+} : {
+  get(k, d){ try{ const v = localStorage.getItem('dnr.'+k); return v==null? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('dnr.'+k, JSON.stringify(v)); }catch(e){} },
+  del(k){ try{ localStorage.removeItem('dnr.'+k); }catch(e){} }
+};
+const idb = NATIVE ? {
+  async put(k, v){ await native({ kind:'filePut', name:k, b64:u8ToB64(new Uint8Array(v)) }); },
+  async get(k){ const r = await native({ kind:'fileGet', name:k }); return r && r.b64 ? b64ToU8(r.b64).buffer : null; }
+} : {
+  open(){ return new Promise((res, rej) => { try{ const r = indexedDB.open('dnr', 1); r.onupgradeneeded = () => r.result.createObjectStore('f'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }catch(e){ rej(e); } }); },
+  async put(k, v){ try{ const db = await this.open(); await new Promise(r => { const t = db.transaction('f','readwrite'); t.objectStore('f').put(v, k); t.oncomplete = r; t.onerror = r; }); }catch(e){} },
+  async get(k){ try{ const db = await this.open(); return await new Promise(r => { const q = db.transaction('f').objectStore('f').get(k); q.onsuccess = () => r(q.result); q.onerror = () => r(null); }); }catch(e){ return null; } }
+};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = (s, el=document) => el.querySelector(s);
+const hex2 = n => (n>>>0).toString(16).toUpperCase().padStart(2,'0');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function toast(msg, ms=2800){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true, ms); }
+const onGateway = () => location.protocol==='http:' && /^(\d+\.){3}\d+$|\.local$/.test(location.hostname);
+
+/* ───────── settings ───────── */
+const cfg = Object.assign({ mode: (onGateway() || NATIVE) ? 'pdeg' : 'sim', base: NATIVE ? 'http://192.168.1.200' : '', fade:2, dbxKey:'', tcpPort:95 }, store.get('cfg', {}));
+if(NATIVE && !cfg.base) cfg.base = 'http://192.168.1.200';
+if(!cfg.tcpPort) cfg.tcpPort = 95;
+delete cfg.physAreas;
+const saveCfg = () => store.set('cfg', cfg);
+
+/* ───────── project ───────── */
+let P = null, origDlj = null;          // parsed project + original .dlj bytes (needed to save renames)
+const live = {};                        // areaId → {preset, levels:{ch:pct}, t}
+const devStatus = {};                   // "dcode/box" → 'online' | 'offline' | 'unknown'
+const logLines = [];
+const KIND = { gateway:'Gateway', panel:'פאנל', relay:'ממסרים', load:'דימר', dali:'DALI', other:'התקן' };
+const CHTYPE = { 0:'וירטואלי', 1:'עמעום', 3:'מיתוג', 11:'מנוע' };
+const areaName = a => a ? (a.name || (a.id===1 ? 'אזור 1 · ערוצים לא משויכים' : 'אזור '+a.id)) : '';
+const chName = ch => ch.name || 'ערוץ '+ch.id;
+const devLabel = d => d ? ((d.name||KIND[d.kind]) + (d.location ? ' · '+d.location : '')) : '?';
+const presetName = (a, p) => a.presets[String(p)] || (p===4 ? 'Off' : '');
+const isSwitch = ch => ch.type===3;
+const findCh = (aid, cid) => { const a=P.areas[aid]; return a && a.channels.find(c=>c.id===cid); };
+const devKey = d => d && d.dcode!=null ? d.dcode+'/'+d.box : null;
+const devOut = {};                      // duid → {channel: last known level}
+/* Two ways to get a physical frame through the PDEG's DyNet port from Scriptable:
+   'expect': headers first, frame a moment later (Expect: 100-continue) — like test A on the PC.
+   'sweep' : large bodies, frame repeated at 8 byte offsets, so a later TCP segment starts on a frame. */
+const RAW_METHODS = { expect:'שיטה 1 · כותרות ואז ההודעה', sweep:'שיטה 2 · הודעה חוזרת בגוף גדול' };
+function rawSend(fr, method){
+  method = method || cfg.rawMethod || 'expect';
+  const bodies = [];
+  if(method==='expect'){ const b = new Uint8Array(16); b.set(fr,0); b.set(fr,8); bodies.push(u8ToB64(b)); }
+  else for(let pad=0; pad<8; pad++){ const n=1500, b = new Uint8Array(pad + 8*n); for(let i=0;i<n;i++) b.set(fr, pad + 8*i); bodies.push(u8ToB64(b)); }
+  return native({ kind:'rawPost', host:tcpHost(), port:cfg.tcpPort, bodies, expect: method==='expect' });
+}
+const ASHELL_CMD = `pbpaste | python3 -c "import socket,sys,re,time;t=sys.stdin.read();m=re.search('([0-9.]+):([0-9]+):([0-9A-Fa-f]{16})',t);s=socket.create_connection((m[1],int(m[2])),3);s.sendall(bytes.fromhex(m[3]));time.sleep(0.5);s.close();print('sent',m[3])"`;
+function setOut(duid, ch, pct){ (devOut[duid] = devOut[duid] || {})[ch] = pct; document.querySelectorAll(`[data-phys="${duid}:${ch}"]`).forEach(t => t.setAttribute('aria-checked', pct>0)); }
+const tcpHost = () => { try{ return new URL(cfg.base || 'http://192.168.1.200').hostname; }catch(e){ return '192.168.1.200'; } };
+const physArea = dcode => [0x60,0x65,0x49].includes(dcode);
+/* ───────── DyNet1 frames (raw TCP to the PDEG) ───────── */
+const DyNet = {
+  cs(b){ let t=0; for(let i=0;i<7;i++) t+=b[i]; return (-t) & 0xFF; },
+  frame(bytes){ const b = bytes.slice(0,7).map(x=>x&0xFF); b.push(this.cs(b)); return Uint8Array.from(b); },
+  // Physical "Set channel level": 5C <device code> <box> 92 <channel> <level 00..FE> <fade>
+  physLevel(dcode, box, ch, pct){ return this.frame([0x5C, dcode, box, 0x92, ch, Math.round(pct*2.54), 0]); },
+  lpct(b){ return b===0 ? 100 : Math.max(0, Math.min(100, Math.round((255-b)/2.54))); },
+  decode(b){
+    const hex = Array.from(b, hex2).join(' ');
+    if(b[0]===0x5C){
+      const dv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.dcode===b[1] && d.box===b[2]);
+      const who = dv ? `${dv.name||KIND[dv.kind]}${dv.location?' · '+dv.location:''}` : `0x${hex2(b[1])} Box ${b[2]}`;
+      if(b[3]===0x92) return { hex, kind:'phys', dv, ch:b[4], pct:Math.round(b[5]/2.54), text:`${who} · יציאה ${b[4]} → ${Math.round(b[5]/2.54)}%` };
+      return { hex, kind:'phys?', dv, text:`${who} · הודעה פיזית 0x${hex2(b[3])}` };
+    }
+    if(b[0]!==0x1C) return { hex, kind:'other', text:'הודעה 0x'+hex2(b[0]) };
+    const area=b[1], d1=b[2], op=b[3], d2=b[4], d3=b[5], an=areaLabel(area);
+    if(op<=3 || (op>=0x0A && op<=0x0D)){ const p=d3*8+(op<=3?op:op-6)+1; return { hex, kind:'preset', area, preset:p, text:`${an} · פריסט P${p}` }; }
+    if(op===0x04) return { hex, kind:'preset', area, preset:4, text:`${an} · כיבוי` };
+    if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · דיווח פריסט P${d1+d3*8+1}` };
+    if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ערוץ ${d1+1} · ${this.lpct(d3)}%` };
+    if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':'ערוץ '+(d1+1)} → ${this.lpct(d2)}%` };
+    if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
+    return { hex, kind:'other', text:`${an} · opcode 0x${hex2(op)}` };
+  }
+};
+function FrameReader(onFrame){
+  let buf = new Uint8Array(0);
+  return chunk => {
+    const n = new Uint8Array(buf.length + chunk.length); n.set(buf); n.set(chunk, buf.length); buf = n;
+    while(buf.length >= 8){
+      if((buf[0]===0x1C || buf[0]===0x5C) && DyNet.cs(buf)===buf[7]){ onFrame(buf.slice(0,8)); buf = buf.slice(8); }
+      else buf = buf.slice(1);
+    }
+  };
+}
+
+function setProject(p, buf){
+  P = p; origDlj = buf || null;
+  for(const k in live) delete live[k];
+  P.edits = P.edits || {};
+  store.set('project', P);
+  if(buf) idb.put('dlj', buf);
+  route = { tab:'areas', area:null };
+  render();
+}
+const persist = () => store.set('project', P);
+
+/* ───────── gateway link (PDEG HTTP API) ───────── */
+const link = { state:'off', timer:null, busy:Promise.resolve(), fails:0 };
+function setLink(s, txt){ link.state=s; const c=$('#linkChip'); c.dataset.s=s; $('#linkTxt').textContent=txt; const c2=$('#setupChip'); if(c2){ c2.dataset.s=s; c2.lastElementChild.textContent=txt; } }
+function logPush(dir, text, detail){
+  const l = { dir, text, detail, t:new Date() }; logLines.push(l); if(logLines.length>400) logLines.shift();
+  if(route.tab==='log' && route.area==null) appendLog(l);
+}
+function gwUrl(path){ return (cfg.base||'').replace(/\/+$/,'') + path; }
+// One request at a time, like the PDEG's own UI: the gateway answers slowly when flooded.
+function gwFetch(path, opts={}){
+  const run = async () => {
+    if(cfg.mode==='sim') return Sim.fetch(path, opts);
+    const r = await xfetch(gwUrl(path), Object.assign({ cache:'no-store' }, opts));
+    const t = (await r.text()).trim();
+    if(!r.ok) throw new Error('HTTP '+r.status+(t?' · '+t.slice(0,60):''));
+    return t;
+  };
+  const p = link.busy.then(run, run);
+  link.busy = p.catch(()=>{});
+  return p.then(t => { link.fails=0; if(link.state!=='on' && link.state!=='sim') setLink(cfg.mode==='sim'?'sim':'on', cfg.mode==='sim'?'סימולציה':'מחובר'); return t; },
+    e => {
+      link.fails++;
+      const msg = (location.protocol==='https:' && /^http:/.test(cfg.base||'')) ? 'הדף פתוח ב-HTTPS ולכן הדפדפן חוסם פנייה ל-PDEG ב-HTTP. פתח את האפליקציה מה-PDEG עצמו.' :
+        (e.message==='Failed to fetch' || e.name==='TypeError') ? 'אין מענה מה-PDEG ('+(cfg.base||location.host)+').' : e.message;
+      logPush('err', msg, path);
+      if(link.fails>=2) setLink('err','אין קשר');
+      throw new Error(msg);
+    });
+}
+const num = t => { const m = /=\s*(-?\d+)/.exec(t) || /(-?\d+)\s*$/.exec(t); return m ? +m[1] : NaN; };
+const GW = {
+  async preset(a, p, fade){
+    await gwFetch(`/SetDyNet.cgi?a=${a}&p=${p}&f=${fade}&_=${Date.now()}`);
+    logPush('tx', `${areaLabel(a)} · פריסט P${p} · דעיכה ${fade} ש׳`);
+    setLive(a, { preset:p });
+  },
+  async level(a, c, pct, fade){
+    await gwFetch(`/SetDyNet.cgi?a=${a}&c=${c}&l=${pct}&f=${fade}&j=255`);
+    logPush('tx', `${areaLabel(a)} · ערוץ ${c} → ${pct}%`);
+    setLive(a, { level:[c,pct] });
+  },
+  /* Single output on one controller: physical DyNet message straight to the PDEG over TCP */
+  async physical(dv, ch, pct){
+    if(!CAN_PHYS) throw new Error('שליטה ביציאה בודדת זמינה באפליקציה באייפון (Scriptable).');
+    if(cfg.mode==='sim'){ await sleep(60); }
+    else {
+      const fr = DyNet.physLevel(dv.dcode, dv.box, ch, pct);
+      let r;
+      const hexs = Array.from(fr, hex2).join('');
+      if(HAS_TCP) r = await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(fr) });
+      else {
+        r = await native({ kind:'shortcut', name:cfg.shortcutName || 'Dynet Send', text:`${tcpHost()}:${cfg.tcpPort}:${hexs}` });
+        if(!r || r.error){ logPush('err', 'הקיצור "'+(cfg.shortcutName||'Dynet Send')+'" לא רץ: '+((r&&r.error)||''), hexs); throw new Error('הקיצור DyNet Send לא רץ. בדוק שהוא קיים בקיצורים.'); }
+      }
+      if(!r || r.error){ logPush('err', 'שליחה ב-TCP נכשלה: '+((r&&r.error)||''), tcpHost()+':'+cfg.tcpPort); throw new Error('אין חיבור TCP ל-PDEG ('+tcpHost()+':'+cfg.tcpPort+').'); }
+      logPush('tx', `${dv.name||KIND[dv.kind]} · Box ${dv.box} · יציאה ${ch} → ${pct}%`, Array.from(fr, hex2).join(' '));
+    }
+    setOut(dv.duid, ch, pct);
+    cfg.lastOut = { duid:dv.duid, ch }; saveCfg();
+  },
+  async getPreset(a){
+    const t = await gwFetch(`/GetDyNet.cgi?a=${a}&_=${Date.now()}`); const p = num(t);
+    logPush('rx', `${areaLabel(a)} · פריסט נוכחי P${p}`, t);
+    if(!isNaN(p)) setLive(a, { preset:p }); return p;
+  },
+  async getLevel(a, c){
+    const t = await gwFetch(`/GetDyNet.cgi?a=${a}&c=${c}&_=${Date.now()}`); const v = num(t);
+    logPush('rx', `${areaLabel(a)} · ערוץ ${c} · ${v}%`, t);
+    if(!isNaN(v)) setLive(a, { level:[c,v] }); return v;
+  },
+  async post(req){
+    const t = await gwFetch('/WebPage.cgi', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ request:req }) });
+    return JSON.parse(t).reply;
+  },
+  async deviceStatus(){
+    let reply = await this.post({ main:'metric', sub:'device_status', find:'all' });
+    let list = [].concat(reply.value || []);
+    const total = reply.range ? reply.range[2] : 0, page = reply.range ? reply.range[1]+1 : 0;
+    for(let i=list.length; page>0 && i<total; i+=page){
+      const r = await this.post({ main:'metric', sub:'device_status', find:'Id', range:[i, total-1] });
+      list = list.concat(r.value || []);
+    }
+    list.forEach(d => devStatus[d.DCode+'/'+d.BNumber] = String(d.Status||'unknown').toLowerCase());
+    logPush('rx', `סטטוס בקרים: ${list.length ? list.filter(d=>/online/i.test(d.Status)).length+' מחוברים מתוך '+list.length : 'ה-PDEG לא מדווח סטטוס בקרים'}`);
+    return list;
+  },
+  async bus(){ return (await this.post({ main:'device', sub:'dynet_bus', find:'all' })).value; },
+  async ident(){ return (await this.post({ main:'device', sub:'identification', find:'all' })).value; }
+};
+function areaLabel(id){ const a=P&&P.areas[id]; return a && a.name ? `${a.name} (${id})` : 'אזור '+id; }
+function setLive(a, u){
+  const L = live[a] = live[a] || { preset:null, levels:{} };
+  if(u.preset!=null) L.preset = u.preset;
+  if(u.level){ const [c,v]=u.level; if(c===0 || c===255){ const ar=P&&P.areas[a]; ar && ar.channels.forEach(x=>L.levels[x.id]=v); } else L.levels[c]=v; }
+  L.t = Date.now();
+  updateLive(a);
+}
+
+/* Simulated gateway: same URLs, answers from memory */
+const Sim = {
+  presets:{}, levels:{},
+  async fetch(path, opts){
+    await sleep(60);
+    const u = new URL(path, 'http://sim'); const q = Object.fromEntries(u.searchParams);
+    const a=+q.a, c=q.c!=null?+q.c:null;
+    if(u.pathname==='/GetDyNet.cgi') return c==null ? 'p='+(this.presets[a]||1) : 'l='+(this.levels[a+':'+c] ?? 0);
+    if(u.pathname==='/SetDyNet.cgi'){
+      if(q.p){ const p=+q.p; this.presets[a]=p; const ar=P&&P.areas[a]; ar && ar.channels.forEach(ch=>this.levels[a+':'+ch.id] = isSwitch(ch) ? (p===4?0:100) : ({1:100,2:75,3:50,4:0}[p] ?? 60)); }
+      else if(c!=null){ const ar=P&&P.areas[a]; (c===0||c===255) && ar ? ar.channels.forEach(ch=>this.levels[a+':'+ch.id]=+q.l) : this.levels[a+':'+c]=+q.l; }
+      return 'OK';
+    }
+    if(u.pathname==='/WebPage.cgi'){
+      const req = JSON.parse(opts.body).request;
+      if(req.sub==='device_status'){ const v = P ? P.deviceOrder.map((d,i)=>({ Id:i, DCode:P.devices[d].dcode, BNumber:P.devices[d].box, Status: i%17===5?'offline':'online' })).filter(x=>x.DCode!=null) : []; return JSON.stringify({ reply:{ value:v, range:[0,v.length-1,v.length] } }); }
+      if(req.sub==='dynet_bus') return JSON.stringify({ reply:{ value:{ Voltage:14.3, VoltageState:'Ok' } } });
+      if(req.sub==='identification') return JSON.stringify({ reply:{ value:{ DeviceCode:220, BoxNumber:9, FirmwareVersion:'sim', IPv4Addr:'sim' } } });
+    }
+    return '';
+  }
+};
+
+async function connect(){
+  setLink('wait','מתחבר…');
+  try{
+    const id = await GW.ident();
+    const bus = await GW.bus().catch(()=>null);
+    link.info = { id, bus };
+    setLink(cfg.mode==='sim'?'sim':'on', cfg.mode==='sim'?'סימולציה':'מחובר');
+    logPush('rx', `PDEG ${id.IPv4Addr||''} · FW ${id.FirmwareVersion||''}${bus?' · אפיק DyNet '+bus.Voltage+'V':''}`);
+    GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
+    if(route.tab==='setup') renderSetup($('#main'));
+    if(route.area!=null) requestArea(P.areas[route.area], true);
+  }catch(e){ setLink('err','אין קשר'); if(route.tab==='setup') renderSetup($('#main')); }
+  if(HAS_TCP && cfg.mode==='pdeg') tcpListen();
+}
+/* Live DyNet traffic from the PDEG: wall switches, other apps, System Builder */
+const tcp = { running:false, state:'off' };
+const rxFrame = FrameReader(fr => {
+  const d = DyNet.decode(fr);
+  logPush('rx', d.text, d.hex);
+  if(d.kind==='preset') setLive(d.area, { preset:d.preset });
+  else if(d.kind==='level') setLive(d.area, { level:[d.ch, d.pct] });
+  else if(d.kind==='phys' && d.dv) setOut(d.dv.duid, d.ch, d.pct);
+});
+function setTcp(s){ tcp.state = s; const el = $('#tcpState'); if(el) el.textContent = { on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[s] || s; }
+async function tcpListen(){
+  if(tcp.running) return; tcp.running = true;
+  while(tcp.running && cfg.mode==='pdeg'){
+    const o = await native({ kind:'tcpOpen', host:tcpHost(), port:cfg.tcpPort });
+    if(!o || o.error){ setTcp('err'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort); await sleep(5000); continue; }
+    setTcp('on');
+    while(tcp.running){
+      const r = await native({ kind:'tcpPoll', wait:10 });
+      if(!r || r.error){ await sleep(1000); break; }
+      if(r.b64) rxFrame(b64ToU8(r.b64));
+      if(r.closed){ setTcp('err'); await sleep(2000); break; }
+    }
+  }
+  tcp.running = false;
+}
+function isUp(){ return link.state==='on' || link.state==='sim'; }
+function act(promise){ return promise.catch(e => toast(e.message, 4500)); }
+
+/* Light polling of the open area so wall-switch changes show up */
+setInterval(() => {
+  if(document.hidden || !isUp() || route.area==null || !P) return;
+  const a = P.areas[route.area]; if(!a) return;
+  if(Date.now() - (live[a.id]?.t||0) > 5000) requestArea(a, true);
+}, 6000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden && link.state!=='off') connect(); });
+
+/* ───────── routing + render ───────── */
+let route = { tab:'areas', area:null };
+const openFolders = new Set(store.get('openFolders', []));
+function go(r){ route = Object.assign({ area:null }, r); render(); window.scrollTo(0,0); }
+
+function render(){
+  document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab===route.tab ? 'page' : 'false'));
+  $('#backBtn').hidden = route.area==null;
+  const m = $('#main');
+  if(!P && route.tab!=='setup' && route.tab!=='log'){ route.tab='setup'; return render(); }
+  if(route.area!=null) return renderArea(m, P.areas[route.area]);
+  $('#hTitle').textContent = P ? P.name : 'DyNet Remote';
+  $('#hSub').textContent = P ? `${Object.keys(P.areas).length} אזורים · ${P.deviceOrder.length} בקרים` : 'לא נטען פרויקט';
+  ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup })[route.tab](m);
+}
+function editsBanner(){
+  const n = P ? Object.keys(P.edits||{}).length : 0;
+  if(!n) return '';
+  return `<div class="banner"><span><b>${n}</b> שמות ערוצים שונו ועוד לא נשמרו בקובץ הפרויקט.</span><button class="btn primary" data-save>שמור לקובץ</button></div>`;
+}
+document.addEventListener('click', e => { if(e.target.closest('[data-save]')) saveProject(); });
+
+/* Areas tab */
+function renderAreas(m){
+  const q = route.q || '';
+  m.innerHTML = `${editsBanner()}
+    <div class="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="חיפוש אזור, ערוץ או מספר" value="${esc(q)}" autocomplete="off"></div>
+    <div id="tree" class="rows" style="gap:10px"></div>`;
+  const qi = $('#q'); qi.addEventListener('input', () => { route.q = qi.value; drawTree(); });
+  drawTree();
+}
+function areaMatches(a, q){
+  q=q.toLowerCase(); if(String(a.id)===q) return true;
+  return areaName(a).toLowerCase().includes(q) || a.channels.some(c => (c.name||'').toLowerCase().includes(q));
+}
+function areaRow(a){
+  const L = live[a.id];
+  return `<button class="row" data-area="${a.id}"><span class="anum">${a.id}</span>
+    <span class="nm"><div>${esc(areaName(a))}</div><div class="meta">${a.channels.length ? a.channels.length+' ערוצים' : 'אזור לוגי ללא ערוצים'}</div></span>
+    <span class="state" data-live-preset="${a.id}" ${L&&L.preset?'':'hidden'}>P${L&&L.preset||''}</span></button>`;
+}
+const chev = '<svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6"/></svg>';
+function bindFolders(root){ root.querySelectorAll('details.group').forEach(d => d.addEventListener('toggle', () => { if(d.open) openFolders.add(d.dataset.k); else openFolders.delete(d.dataset.k); store.set('openFolders',[...openFolders]); if(d.open && d.dataset.k.startsWith('dev/')) pollDevicesIn(d); })); }
+function drawTree(){
+  const q = (route.q||'').trim(), box = $('#tree');
+  if(q){
+    const hits = Object.values(P.areas).filter(a => areaMatches(a,q)).sort((x,y)=>x.id-y.id);
+    box.innerHTML = hits.length ? `<div class="group"><div class="rows">${hits.map(areaRow).join('')}</div></div>` : `<div class="empty">לא נמצאו אזורים עבור „${esc(q)}”.</div>`;
+    return;
+  }
+  const countAreas = f => f.children.reduce((s,c)=> s + (c.type==='area'?1:countAreas(c)), 0);
+  const folderHtml = (f, key) => {
+    const k = key+'/'+f.name;
+    return `<details class="group" data-k="${esc(k)}" ${openFolders.has(k)?'open':''}><summary>${chev}${esc(f.name)}<span class="count">${countAreas(f)}</span></summary>
+      ${f.children.filter(c=>c.type==='folder').map(c=>folderHtml(c,k)).join('')}
+      <div class="rows">${f.children.filter(c=>c.type==='area').map(c=>areaRow(P.areas[c.id])).join('')}</div></details>`;
+  };
+  const loose = P.tree.children.filter(c => c.type==='area');
+  box.innerHTML = P.tree.children.filter(c=>c.type==='folder').map(f=>folderHtml(f,'')).join('') +
+    (loose.length ? folderHtml({ name:'ללא תיקייה', children:loose }, '') : '');
+  bindFolders(box);
+}
+
+/* Area screen */
+function renderArea(m, a){
+  if(!a){ go({tab:'areas'}); return; }
+  $('#hTitle').textContent = areaName(a);
+  $('#hSub').textContent = `אזור ${a.id}` + (a.path.length ? ' · '+a.path.join(' › ') : '');
+  const presets = [1,2,3,4,5,6,7,8].map(p => `<button class="pbtn" data-preset="${p}" aria-pressed="false"><span class="pn">P${p}</span><span class="pl">${esc(presetName(a,p))||'&nbsp;'}</span></button>`).join('');
+  const fades = [0,0.5,2,5,10];
+  const chs = a.channels.map(ch => {
+    const phys = ch.phys.slice(0,6).map(([d,n]) => `<span class="chip"><b>${esc(devLabel(P.devices[d]))}</b> · יציאה ${n+1}</span>`).join('') + (ch.phys.length>6 ? `<span class="chip">+${ch.phys.length-6}</span>` : '');
+    const ctrl = isSwitch(ch)
+      ? `<button class="toggle" role="switch" aria-checked="false" data-sw="${ch.id}" aria-label="${esc(chName(ch))}"></button>`
+      : `<input type="range" min="0" max="100" step="1" value="0" data-sl="${ch.id}" aria-label="${esc(chName(ch))}"><button class="toggle" role="switch" aria-checked="false" data-sw="${ch.id}" aria-label="הדלק/כבה ${esc(chName(ch))}"></button>`;
+    const edited = P.edits[a.id+':'+ch.id]!=null;
+    return `<div class="ch" data-ch="${ch.id}">
+      <div class="hd"><span class="lamp" data-lamp="${ch.id}"></span>
+        <span class="cn"><span data-cname="${ch.id}">${esc(chName(ch))}</span>${edited?' <span class="mod">שונה</span>':''}<small>ערוץ ${ch.id} · ${CHTYPE[ch.type]||'סוג '+ch.type}</small></span>
+        <button class="icon" data-rename="${ch.id}" aria-label="שנה שם"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>
+        <span class="lvl" data-lvl="${ch.id}">—</span></div>
+      ${ch.desc ? `<div class="desc">${esc(ch.desc)}</div>` : ''}
+      <div class="ctrl">${ctrl}</div>
+      ${phys ? `<div class="chips">${phys}</div>` : ''}
+    </div>`;
+  }).join('');
+  const panels = a.devices.map(d=>P.devices[d]).filter(Boolean);
+  m.innerHTML = `${editsBanner()}
+    <section class="card">
+      <h2>פריסטים<span class="sp"></span><span class="mono muted" id="curPreset">נוכחי: לא ידוע</span></h2>
+      <div class="presets">${presets}</div>
+      <div class="fade"><span class="muted">דעיכה</span><div class="seg" id="fadeSeg">${fades.map(f=>`<button data-fade="${f}" aria-pressed="${cfg.fade===f}">${f}s</button>`).join('')}</div></div>
+    </section>
+    <section class="card">
+      <h2>ערוצים<span class="sp"></span><button class="btn" id="refresh"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>קרא מצב</button></h2>
+      ${chs || `<div class="empty">לאזור הזה אין ערוצים. הוא משמש לשליחת פריסטים בלבד (לוגיקה / אזור משותף).</div>`}
+      ${a.channels.length ? `<div class="actions"><button class="btn ghost" data-all="100">כל הערוצים 100%</button><button class="btn ghost" data-all="0">כל הערוצים 0%</button></div>` : ''}
+    </section>
+    ${panels.length ? `<section class="card"><h2>פאנלים והתקנים באזור</h2><div class="chips">${panels.map(d=>`<span class="chip"><b>${esc(d.name||KIND[d.kind])}</b>${d.location?' · '+esc(d.location):''}</span>`).join('')}</div></section>` : ''}`;
+
+  m.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+    act(GW.preset(a.id, +b.dataset.preset, cfg.fade).then(() => sleep(400 + cfg.fade*1000)).then(() => requestArea(a, true)));
+  }));
+  m.querySelectorAll('[data-fade]').forEach(b => b.addEventListener('click', () => { cfg.fade=+b.dataset.fade; saveCfg(); m.querySelectorAll('[data-fade]').forEach(x=>x.setAttribute('aria-pressed', x===b)); }));
+  m.querySelectorAll('[data-sl]').forEach(s => {
+    const ch=+s.dataset.sl;
+    s.addEventListener('pointerdown', ()=>s.dataset.drag='1');
+    s.addEventListener('input', ()=>{ s.dataset.drag='1'; $(`[data-lvl="${ch}"]`).textContent = s.value+'%'; });
+    s.addEventListener('change', ()=>{ delete s.dataset.drag; act(GW.level(a.id, ch, +s.value, cfg.fade)); });
+  });
+  m.querySelectorAll('[data-sw]').forEach(t => t.addEventListener('click', () => {
+    const on = t.getAttribute('aria-checked')!=='true'; act(GW.level(a.id, +t.dataset.sw, on?100:0, 0));
+  }));
+  m.querySelectorAll('[data-all]').forEach(b => b.addEventListener('click', () => act(GW.level(a.id, 0, +b.dataset.all, cfg.fade))));
+  m.querySelectorAll('[data-rename]').forEach(b => b.addEventListener('click', () => startRename(a, +b.dataset.rename)));
+  $('#refresh', m) && $('#refresh', m).addEventListener('click', () => requestArea(a));
+  updateLive(a.id);
+  if(isUp()) requestArea(a, true);
+}
+async function requestArea(a, quiet){
+  if(!isUp()){ if(!quiet) toast('אין קשר ל-PDEG. התחבר בלשונית „פרויקט וחיבור”.'); return; }
+  try{
+    await GW.getPreset(a.id);
+    for(const ch of a.channels) await GW.getLevel(a.id, ch.id);
+  }catch(e){ if(!quiet) toast(e.message, 4500); }
+}
+function updateLive(id){
+  const L = live[id];
+  document.querySelectorAll(`[data-live-preset="${id}"]`).forEach(el => { if(L && L.preset){ el.hidden=false; el.textContent='P'+L.preset; } });
+  if(L) for(const ch in L.levels) document.querySelectorAll(`[data-lout="${id}:${ch}"]`).forEach(t => t.setAttribute('aria-checked', L.levels[ch]>0));
+  if(route.area!==id || !L) return;
+  const cp=$('#curPreset'); if(cp && L.preset) cp.textContent='נוכחי: P'+L.preset;
+  document.querySelectorAll('[data-preset]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.preset===L.preset));
+  for(const ch in L.levels){
+    const v=L.levels[ch];
+    const lv=$(`[data-lvl="${ch}"]`), sl=$(`[data-sl="${ch}"]`), lamp=$(`[data-lamp="${ch}"]`);
+    if(lv && !(sl && sl.dataset.drag)) lv.textContent = v+'%';
+    if(sl && !sl.dataset.drag) sl.value = v;
+    document.querySelectorAll(`[data-sw="${ch}"]`).forEach(sw => sw.setAttribute('aria-checked', v>0));
+    if(lamp){ lamp.style.background = v>0 ? `color-mix(in srgb, var(--accent) ${30+v*0.7}%, var(--surface-2))` : ''; lamp.style.boxShadow = v>0 ? `0 0 ${4+v/10}px color-mix(in srgb, var(--accent) ${v}%, transparent)` : ''; }
+  }
+}
+
+/* Rename channel */
+function startRename(a, cid){
+  const ch = a.channels.find(c=>c.id===cid), span = $(`[data-cname="${cid}"]`); if(!ch || !span) return;
+  span.innerHTML = `<span class="rename"><input id="rn-${cid}" value="${esc(ch.name)}" maxlength="64" aria-label="שם הערוץ"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
+  const inp = $('#rn-'+cid); inp.focus(); inp.select();
+  const done = save => {
+    if(save){
+      const v = inp.value.trim();
+      if(v !== ch.name){ ch.name = v; P.edits[a.id+':'+cid] = v; persist(); toast('השם עודכן. שמור לקובץ כדי שיופיע גם ב-System Builder.'); }
+    }
+    renderArea($('#main'), a);
+  };
+  span.querySelector('[data-ok]').onclick = () => done(true);
+  span.querySelector('[data-cancel]').onclick = () => done(false);
+  inp.addEventListener('keydown', e => { if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
+}
+async function saveProject(){
+  const edits = P.edits || {}; const n = Object.keys(edits).length; if(!n) return;
+  if(!origDlj) origDlj = await idb.get('dlj');
+  if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השמות ששינית יישמרו.', 6000); return; }
+  try{
+    toast('מעדכן את קובץ הפרויקט…');
+    const res = await DLJ.applyChannelNames(origDlj, edits);
+    if(P.source && P.source.dropbox){
+      const backup = await dbxSaveWithBackup(P.source.dropbox, res.bytes);
+      toast(`נשמר ב-Dropbox (${res.changed} ערוצים). גיבוי: ${backup}`, 6000);
+    } else {
+      if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(res.bytes) }); }
+      else { const blob = new Blob([res.bytes], { type:'application/octet-stream' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = P.fileName || 'project.dlj'; document.body.appendChild(a); a.click(); a.remove(); }
+      toast(`הקובץ המעודכן ירד למכשיר (${res.changed} ערוצים).`, 5000);
+    }
+    origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
+    P.edits = {}; persist(); render();
+  }catch(e){ toast('השמירה נכשלה: '+e.message, 6000); }
+}
+
+/* Devices tab */
+const KORDER = { gateway:0, relay:1, load:1, dali:2, panel:3, other:4 };
+function statusOf(dv){ const k=devKey(dv); return k ? (devStatus[k]||'unknown') : 'unknown'; }
+function renderDevices(m){
+  const counts = {}; P.deviceOrder.forEach(d => { const k=P.devices[d].kind; counts[k]=(counts[k]||0)+1; });
+  const byLoc = {};
+  P.deviceOrder.forEach(d => { const dv=P.devices[d], l=dv.location||'ללא מיקום'; (byLoc[l]=byLoc[l]||[]).push(dv); });
+  const nat = (x,y) => x.localeCompare(y, 'he', { numeric:true });
+  const locs = Object.keys(byLoc).sort((x,y) => { const lx=byLoc[x].some(d=>d.kind!=='panel'), ly=byLoc[y].some(d=>d.kind!=='panel'); return lx===ly ? nat(x,y) : (lx?-1:1); });
+  const devHtml = dv => {
+    const map = P.physMap[dv.duid] || {}, rows = [];
+    for(let n=0;n<dv.channels;n++){
+      const targets = map[n] || [];
+      const t = targets.map(([aid,cid]) => { const ch=findCh(aid,cid); return `<a href="#" data-goarea="${aid}">${esc(areaName(P.areas[aid]))} › ${esc(ch?chName(ch):'ערוץ '+cid)}</a>`; }).join(' , ');
+      let ctl = '';
+      if(CAN_PHYS && physArea(dv.dcode) && dv.box!=null){
+        const v = devOut[dv.duid] && devOut[dv.duid][n+1];
+        ctl = `<button class="toggle sm" role="switch" aria-checked="${v>0}" data-phys="${dv.duid}:${n+1}" aria-label="יציאה ${n+1}"></button>`;
+      } else if(targets.length){
+        const [aid,cid] = targets[0], ch = findCh(aid,cid);
+        if(aid!==1 && ch && ch.phys.length===1){
+          const L = live[aid], v = L && L.levels[cid];
+          ctl = `<button class="toggle sm" role="switch" aria-checked="${v>0}" data-lout="${aid}:${cid}" aria-label="יציאה ${n+1}"></button>`;
+        } else ctl = `<span class="shared">${aid===1 ? 'לא משויך' : 'משותף ×'+(ch?ch.phys.length:'?')}</span>`;
+      }
+      rows.push(`<span class="n">${n+1}</span><span class="map">${t || '<span class="muted">לא משויך</span>'}</span><span class="oc">${ctl}</span>`);
+    }
+    const meta = [dv.box!=null ? 'Box '+dv.box : '', dv.dcode!=null ? '0x'+hex2(dv.dcode) : '', dv.channels ? dv.channels+' out' : '', dv.fw ? 'FW '+dv.fw : '', dv.serial ? 'S/N '+dv.serial : ''].filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
+    return `<details class="dev" data-duid="${dv.duid}"><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>
+      <span class="nm"><div>${esc(dv.name || '(ללא שם)')}</div><div class="dmeta">${meta}</div></span></summary>
+      ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}</details>`;
+  };
+  const st = Object.values(devStatus); const on = st.filter(s=>s==='online').length, off = st.filter(s=>s==='offline').length;
+  m.innerHTML = `${editsBanner()}
+    ${CAN_PHYS ? '' : `<div class="banner"><span>שליטה ביציאה בודדת זמינה באפליקציה באייפון (Scriptable + a-Shell).</span></div>`}
+    <section class="card"><h2>תקשורת עם הבקרים<span class="sp"></span><button class="btn" id="stRefresh">בדוק עכשיו</button></h2>
+      <div class="summary" id="stSummary">${st.length ? `<span class="pill"><b>${on}</b> מחוברים</span><span class="pill"><b>${off}</b> לא מגיבים</span>` : `<span class="note">${isUp() ? 'ה-PDEG לא מדווח סטטוס בקרים. הפעל ניטור התקנים בלשונית Metrics של ה-PDEG ב-System Builder.' : 'התחבר ל-PDEG כדי לבדוק תקשורת.'}</span>`}</div>
+    </section>
+    <div class="summary">${Object.entries(counts).sort((x,y)=>KORDER[x[0]]-KORDER[y[0]]).map(([k,n])=>`<span class="pill"><b>${n}</b> ${KIND[k]}</span>`).join('')}</div>
+    ${locs.map(loc => {
+      const list = byLoc[loc].slice().sort((x,y)=> (KORDER[x.kind]-KORDER[y.kind]) || nat(x.name,y.name)), k='dev/'+loc;
+      return `<details class="group" data-k="${esc(k)}" ${openFolders.has(k)?'open':''}><summary>${chev}${esc(loc)}<span class="count">${list.length}</span></summary><div class="rows">${list.map(devHtml).join('')}</div></details>`;
+    }).join('')}`;
+  bindFolders(m);
+  m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open) pollDevice(d.dataset.duid); }));
+  m.querySelectorAll('[data-goarea]').forEach(x => x.addEventListener('click', e => { e.preventDefault(); go({ tab:'areas', area:+x.dataset.goarea }); }));
+  m.querySelectorAll('[data-phys]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleOutput(t); }));
+  m.querySelectorAll('[data-lout]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=t.dataset.lout.split(':').map(Number); act(GW.level(aid, cid, t.getAttribute('aria-checked')!=='true' ? 100 : 0, 0)); }));
+  $('#stRefresh').addEventListener('click', () => act(GW.deviceStatus().then(() => renderDevices(m))));
+  for(const a in live) updateLive(+a);
+}
+function refreshDevStatusUI(){ document.querySelectorAll('[data-dk]').forEach(el => { const s = devStatus[el.dataset.dk]; if(s) el.dataset.st = s; }); }
+function toggleOutput(t){
+  const [duid, ch] = t.dataset.phys.split(':'); const dv = P.devices[duid];
+  const on = t.getAttribute('aria-checked')!=='true';
+  act(GW.physical(dv, +ch, on?100:0));
+}
+async function pollDevice(){}
+function pollDevicesIn(){}
+
+/* Log tab */
+function logHtml(l){ const tag = { tx:'שליחה', rx:'תשובה', err:'שגיאה' }[l.dir]; return `<div class="ln"><span class="d ${l.dir}">${tag}</span><span class="t">${l.t.toLocaleTimeString('he-IL',{hour12:false})}</span><span class="txt">${esc(l.text)}</span>${l.detail?`<span class="hex">${esc(l.detail)}</span>`:''}</div>`; }
+function renderLog(m){
+  m.innerHTML = `<div class="actions"><button class="btn ghost" id="logClear">נקה</button><span class="muted" style="font-size:12.5px;align-self:center">${logLines.length} רשומות</span></div>
+    <div class="log" id="log">${logLines.length ? logLines.slice().reverse().map(logHtml).join('') : '<div class="empty">אין עדיין פעילות. פתח אזור או לחץ על פריסט.</div>'}</div>`;
+  $('#logClear').addEventListener('click', () => { logLines.length=0; renderLog(m); });
+}
+function appendLog(l){ const box=$('#log'); if(!box) return; const e=box.querySelector('.empty'); if(e) e.remove(); box.insertAdjacentHTML('afterbegin', logHtml(l)); while(box.children.length>200) box.lastElementChild.remove(); }
+
+/* Project + connection tab */
+function renderSetup(m){
+  const info = link.info;
+  m.innerHTML = `
+    <section class="card">
+      <h2>פרויקט</h2>
+      ${P ? `<div class="proj"><span class="ic">DLJ</span><div style="min-width:0"><div style="font-weight:600">${esc(P.name)}</div><div class="note">${Object.keys(P.areas).length} אזורים · ${P.deviceOrder.length} בקרים · System Builder ${esc(P.builder)}${P.source&&P.source.dropbox?' · מ-Dropbox':''}${P.sample?' · נטען מהקובץ ששלחת':''}</div></div></div>` : `<div class="hero"><h2>פתח פרויקט Dynalite</h2><div class="note">בחר קובץ ‎.dlj‎ מ-Dropbox או מהטלפון. האפליקציה קוראת את האזורים, הערוצים והבקרים מתוך הקובץ.</div></div>`}
+      <div class="actions">
+        <button class="btn primary" id="dbxOpen"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 2l6 3.8L6 9.6 0 5.8zM18 2l6 3.8-6 3.8-6-3.8zM0 13.4l6-3.8 6 3.8-6 3.8zm18-3.8l6 3.8-6 3.8-6-3.8zM6 18.4l6-3.8 6 3.8-6 3.8z"/></svg>פתח מ-Dropbox</button>
+        ${NATIVE ? `<button class="btn" id="pickBtn">קובץ מהטלפון</button>` : `<label class="btn"><input type="file" id="fileIn" accept=".dlj" hidden>קובץ מהטלפון</label>`}
+      </div>
+      <div id="dbxPane" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>חיבור ל-PDEG<span class="sp"></span><span class="link-chip" id="setupChip" data-s="${link.state}"><span class="dot"></span><span>${$('#linkTxt').textContent}</span></span></h2>
+      <div class="radio">
+        <label><input type="radio" name="mode" value="pdeg" ${cfg.mode==='pdeg'?'checked':''}><span><b>Ethernet Gateway (PDEG)</b><small>שליטה דרך שרת הווב של ה-PDEG.</small></span></label>
+        <label><input type="radio" name="mode" value="sim" ${cfg.mode==='sim'?'checked':''}><span><b>סימולציה</b><small>PDEG מדומה, לבדיקת הממשק בלי אתר.</small></span></label>
+      </div>
+      ${CAN_PHYS ? `<div class="grid2"><div class="field"><label>${HAS_TCP?'חיבור TCP לשליטה ביציאות':'שליטה ביציאות'}</label><div class="note" id="tcpState">${HAS_TCP ? ({ on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[tcp.state]) : 'דרך פורט ה-DyNet של ה-PDEG'}</div></div><div class="field"><label for="tcpPort">פורט DyNet</label><input id="tcpPort" class="ltr" inputmode="numeric" value="${esc(cfg.tcpPort)}"></div></div>` : ''}
+      <div class="field" id="baseField"><label for="base">כתובת ה-PDEG</label><input id="base" class="ltr" inputmode="url" placeholder="${onGateway() ? 'ריק = ה-PDEG שממנו נפתחה האפליקציה' : 'http://192.168.1.200'}" value="${esc(cfg.base)}"></div>
+      ${info ? `<div class="kv mono"><span>IP</span><span>${esc(info.id.IPv4Addr||'')}</span><span>Box</span><span>${esc(info.id.BoxNumber)}</span><span>FW</span><span>${esc(info.id.FirmwareVersion||'')}</span>${info.bus?`<span>אפיק DyNet</span><span>${esc(info.bus.Voltage)}V · ${esc(info.bus.VoltageState||'')}</span>`:''}</div>` : ''}
+      ${!onGateway() && !NATIVE && cfg.mode==='pdeg' ? `<div class="note">ה-PDEG לא מאשר פניות מאתרים אחרים, לכן האפליקציה צריכה להיפתח מה-PDEG עצמו (http://192.168.1.200/dynet.htm).</div>` : ''}
+      <div class="actions"><button class="btn primary" id="connBtn">${isUp()?'בדוק חיבור שוב':'התחבר'}</button></div>
+    </section>
+
+    ${VIA_ASHELL ? `<section class="card">
+      <h2>שליטה ביציאה בודדת · a-Shell</h2>
+      <div class="note">כל מתג של יציאה מפעיל את הקיצור הזה, והוא שולח את ההודעה הפיזית ל-PDEG דרך a-Shell.</div>
+      <div class="field"><label for="scName">שם הקיצור</label><input id="scName" class="ltr" value="${esc(cfg.shortcutName||'Dynet Send')}"></div>
+      <div class="note">הפקודה לפעולה „Execute Command” של a-Shell, בלי שום משתנה. האפליקציה מעבירה את ההודעה דרך לוח ההעתקה. ב-„Open the app” לבחור <b>yes</b>:</div>
+      <pre class="code" id="ashCmd">${esc(ASHELL_CMD)}</pre>
+      <div class="actions"><button class="btn" id="copyAsh">העתק פקודה</button></div>
+    </section>` : ''}
+
+    <section class="card">
+      <h2>Dropbox</h2>
+      <div class="field"><label for="dbxKey">App key</label><input id="dbxKey" class="ltr" value="${esc(cfg.dbxKey)}" placeholder="xxxxxxxxxxxxxxx" autocomplete="off"></div>
+      <div class="note">${store.get('dbx',null) ? 'מחובר ל-Dropbox.' : 'לא מחובר. ההתחברות נעשית בדף של Dropbox עם שם משתמש וסיסמה.'}</div>
+      <div class="actions"><button class="btn" id="dbxLogout" ${store.get('dbx',null)?'':'disabled'}>התנתק מ-Dropbox</button></div>
+    </section>`;
+
+  const sync = () => { $('#baseField').hidden = m.querySelector('input[name=mode]:checked').value!=='pdeg'; };
+  m.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cfg.mode=r.value; saveCfg(); sync(); setLink('off','מנותק'); }));
+  sync();
+  $('#base').addEventListener('change', e => { let v=e.target.value.trim(); if(v && !/^https?:\/\//.test(v)) v='http://'+v; cfg.base=v; e.target.value=v; saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); });
+  $('#dbxKey').addEventListener('change', e => { cfg.dbxKey=e.target.value.trim(); saveCfg(); });
+  $('#connBtn').addEventListener('click', connect);
+  $('#scName') && $('#scName').addEventListener('change', e => { cfg.shortcutName = e.target.value.trim() || 'Dynet Send'; saveCfg(); });
+  $('#copyAsh') && $('#copyAsh').addEventListener('click', () => { (navigator.clipboard ? navigator.clipboard.writeText(ASHELL_CMD) : Promise.reject()).then(()=>toast('הפקודה הועתקה'), ()=>{ const r=document.createRange(); r.selectNodeContents($('#ashCmd')); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('סמן והעתק'); }); });
+  m.querySelectorAll('input[name=rawm]').forEach(r => r.addEventListener('change', () => { cfg.rawMethod = r.value; saveCfg(); }));
+  const rawTest = pct => { const lo = cfg.lastOut, dv = lo && P && P.devices[lo.duid]; if(!dv){ toast('הפעל קודם יציאה כלשהי בלשונית בקרים.'); return; } act(GW.physical(dv, lo.ch, pct)).then(()=>toast('נשלח בשיטה '+((cfg.rawMethod||'expect')==='expect'?'1':'2')+'. בדוק אם היציאה הגיבה.')); };
+  $('#rawTestOn') && $('#rawTestOn').addEventListener('click', () => rawTest(100));
+  $('#rawTestOff') && $('#rawTestOff').addEventListener('click', () => rawTest(0));
+  $('#tcpPort') && $('#tcpPort').addEventListener('change', e => { cfg.tcpPort = +e.target.value || 95; saveCfg(); native({ kind:'tcpClose' }); });
+  $('#pickBtn') && $('#pickBtn').addEventListener('click', async () => {
+    try{ const r = await native({ kind:'pick' }); if(!r || !r.b64) return; toast('קורא את '+r.name+'…'); const buf = b64ToU8(r.b64).buffer; const p = await DLJ.parseDljBuffer(buf, r.name); setProject(p, buf); toast('נטען: '+Object.keys(p.areas).length+' אזורים'); }
+    catch(err){ toast(err.message||'קריאת הקובץ נכשלה', 5000); }
+  });
+  $('#fileIn') && $('#fileIn').addEventListener('change', async e => {
+    const f = e.target.files[0]; if(!f) return;
+    try{ toast('קורא את '+f.name+'…'); const buf = await f.arrayBuffer(); const p = await DLJ.parseDljBuffer(buf, f.name); setProject(p, buf); toast('נטען: '+Object.keys(p.areas).length+' אזורים'); }
+    catch(err){ toast(err.message||'קריאת הקובץ נכשלה', 5000); }
+  });
+  $('#dbxOpen').addEventListener('click', () => dbxBrowse(''));
+  $('#dbxLogout').addEventListener('click', () => { store.del('dbx'); toast('נותקת מ-Dropbox'); renderSetup(m); });
+}
+
+/* ───────── Dropbox: sign in on Dropbox's page, paste the code back ─────────
+   The app runs on the PDEG over plain HTTP, which Dropbox won't accept as a redirect,
+   so it uses Dropbox's "show me a code" flow (PKCE, no redirect). */
+function b64url(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+async function dbxAuthUrl(){
+  const v = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const ch = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
+  store.set('dbxVerifier', v);
+  const u = new URL('https://www.dropbox.com/oauth2/authorize');
+  u.search = new URLSearchParams({ client_id:cfg.dbxKey, response_type:'code', code_challenge:ch, code_challenge_method:'S256', token_access_type:'offline' });
+  return u.toString();
+}
+async function dbxExchange(code){
+  const body = new URLSearchParams({ code:code.trim(), grant_type:'authorization_code', client_id:cfg.dbxKey, code_verifier:store.get('dbxVerifier','') });
+  const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body });
+  const j = await r.json(); if(!r.ok) throw new Error(j.error_description || 'הקוד לא התקבל. נסה שוב.');
+  store.set('dbx', { access:j.access_token, refresh:j.refresh_token, exp:Date.now()+j.expires_in*1000 }); store.del('dbxVerifier');
+}
+async function dbxToken(){
+  const t = store.get('dbx', null); if(!t) return null;
+  if(Date.now() < t.exp - 60000) return t.access;
+  const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams({ grant_type:'refresh_token', refresh_token:t.refresh, client_id:cfg.dbxKey }) });
+  const j = await r.json(); if(!r.ok){ store.del('dbx'); return null; }
+  t.access=j.access_token; t.exp=Date.now()+j.expires_in*1000; store.set('dbx', t); return t.access;
+}
+async function dbxApi(ep, args){
+  const tok = await dbxToken(); if(!tok) throw new Error('יש להתחבר ל-Dropbox מחדש');
+  const r = await xfetch('https://api.dropboxapi.com/2/'+ep, { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/json' }, body:JSON.stringify(args) });
+  if(!r.ok) throw new Error('Dropbox '+r.status+': '+(await r.text()).slice(0,120)); return r.json();
+}
+const dbxArg = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+async function dbxBrowse(path){
+  const pane = $('#dbxPane'); if(!pane) return; pane.hidden=false;
+  if(!cfg.dbxKey){ pane.innerHTML = '<div class="note">הזן קודם App key של Dropbox בכרטיס Dropbox למטה.</div>'; return; }
+  let tok=null; try{ tok = await dbxToken(); }catch(e){}
+  if(!tok){
+    const url = await dbxAuthUrl();
+    pane.innerHTML = `<div class="note">1. פתח את דף Dropbox, התחבר עם שם המשתמש והסיסמה ואשר גישה.<br>2. Dropbox יציג קוד. העתק אותו והדבק כאן.</div>
+      <div class="actions">${NATIVE ? `<button class="btn primary" id="dbxOpenUrl">פתח את Dropbox</button>` : `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">פתח את Dropbox</a>`}</div>
+      <div class="sendbar"><input id="dbxCode" placeholder="הדבק את הקוד" autocomplete="off"><button class="btn primary" id="dbxCodeOk">אישור</button></div>`;
+    $('#dbxOpenUrl') && ($('#dbxOpenUrl').onclick = () => native({ kind:'open', url }));
+    $('#dbxCodeOk').onclick = async () => { try{ await dbxExchange($('#dbxCode').value); toast('מחובר ל-Dropbox'); dbxBrowse(''); }catch(e){ toast(e.message, 5000); } };
+    return;
+  }
+  pane.innerHTML = '<div class="note">טוען תיקייה…</div>';
+  try{
+    let res = await dbxApi('files/list_folder', { path, limit:500 }), entries = res.entries;
+    while(res.has_more){ res = await dbxApi('files/list_folder/continue', { cursor:res.cursor }); entries = entries.concat(res.entries); }
+    entries = entries.filter(e => e['.tag']==='folder' || /\.dlj$/i.test(e.name));
+    entries.sort((a,b)=> (a['.tag']===b['.tag'] ? a.name.localeCompare(b.name,'he') : a['.tag']==='folder'?-1:1));
+    const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
+    pane.innerHTML = `<div class="note mono" style="direction:ltr;text-align:left">${esc(path||'/')}</div><div class="dbx-list">
+      ${up!==null ? `<button data-dir="${esc(up)}">↩ תיקייה למעלה</button>` : ''}
+      ${entries.map(e => e['.tag']==='folder' ? `<button data-dir="${esc(e.path_lower)}">📁 ${esc(e.name)}</button>` : `<button data-file="${esc(e.id)}" data-name="${esc(e.name)}">📄 ${esc(e.name)}</button>`).join('') || '<div class="empty">אין כאן קבצי DLJ.</div>'}</div>`;
+    pane.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => dbxBrowse(b.dataset.dir));
+    pane.querySelectorAll('[data-file]').forEach(b => b.onclick = () => dbxOpenFile(b.dataset.file, b.dataset.name));
+  }catch(e){ pane.innerHTML = `<div class="note">${esc(e.message)}</div>`; }
+}
+async function dbxOpenFile(id, name){
+  try{
+    toast('מוריד '+name+'…');
+    const tok = await dbxToken();
+    const r = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path:id }) } });
+    if(!r.ok) throw new Error('ההורדה נכשלה ('+r.status+')');
+    const buf = await r.arrayBuffer();
+    const p = await DLJ.parseDljBuffer(buf, name);
+    p.source = { dropbox:id }; setProject(p, buf); toast('נטען: '+name);
+  }catch(e){ toast(e.message, 5000); }
+}
+async function dbxSaveWithBackup(id, bytes){
+  const meta = await dbxApi('files/get_metadata', { path:id });
+  const dir = meta.path_display.slice(0, meta.path_display.lastIndexOf('/'));
+  const d = new Date(), pad = n => String(n).padStart(2,'0');
+  const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const backup = `${dir}/גיבויים/${meta.name.replace(/\.dlj$/i,'')}.${stamp}.dlj`;
+  await dbxApi('files/copy_v2', { from_path:meta.path_display, to_path:backup, autorename:true });
+  const tok = await dbxToken();
+  const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
+    'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:bytes });
+  if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
+  if(!r.ok) throw new Error('העלאה נכשלה ('+r.status+')');
+  return backup.split('/').slice(-2).join('/');
+}
+
+/* ───────── boot ───────── */
+document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => go({ tab:b.dataset.tab })));
+$('#backBtn').addEventListener('click', () => go({ tab:'areas' }));
+$('#linkChip').addEventListener('click', () => go({ tab:'setup' }));
+document.addEventListener('click', e => { const r = e.target.closest('[data-area]'); if(r && route.area==null) go({ tab:'areas', area:+r.dataset.area }); });
+
+(async function boot(){
+  let p = store.get('project', null);
+  if(!p){ try{ const s=$('#sampleProject').textContent.trim(); if(s && s[0]==='{'){ p=JSON.parse(s); p.sample=true; } }catch(e){} }
+  if(p){ P = p; P.edits = P.edits || {}; }
+  route = { tab: P ? 'areas' : 'setup', area:null };
+  render();
+  connect();
+})();
+
+</script>
+</body></html>
