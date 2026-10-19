@@ -661,16 +661,18 @@ var DLJ = (function () {
       if (!tf) continue;
       var img = await tf.async('uint8array');
       if (!hasNameTable(img)) continue;
+      var sfA = zip.file('Current/Devices/' + duid + '.source.hex') || zip.file(new RegExp(duid + '\\.source\\.hex$', 'i'))[0];
+      var srcA = sfA ? await sfA.async('uint8array') : null;
       var flfA = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
       var flagsA = flfA ? await flfA.async('uint8array') : null;
       var touched = false, outs = acEdits[duid];
       for (var k in outs) {
         var i = +k, e = outs[k];
-        if (e.area != null) { var a = e.area & 0xffff; img[AREA_BASE + 2 * i] = (a >> 8) & 0xff; img[AREA_BASE + 2 * i + 1] = a & 0xff; markDirty(flagsA, AREA_BASE + 2 * i, 2); }
-        if (e.chan != null) { var c = (e.chan - 1) & 0xffff; img[CHAN_BASE + 2 * i] = (c >> 8) & 0xff; img[CHAN_BASE + 2 * i + 1] = c & 0xff; markDirty(flagsA, CHAN_BASE + 2 * i, 2); }
+        if (e.area != null) { var a = e.area & 0xffff; img[AREA_BASE + 2 * i] = (a >> 8) & 0xff; img[AREA_BASE + 2 * i + 1] = a & 0xff; markPending(srcA, flagsA, AREA_BASE + 2 * i, 2); }
+        if (e.chan != null) { var c = (e.chan - 1) & 0xffff; img[CHAN_BASE + 2 * i] = (c >> 8) & 0xff; img[CHAN_BASE + 2 * i + 1] = c & 0xff; markPending(srcA, flagsA, CHAN_BASE + 2 * i, 2); }
         touched = true; changed++;
       }
-      if (touched) { zip.file(tf.name, img); if (flfA && flagsA) zip.file(flfA.name, flagsA); }
+      if (touched) { zip.file(tf.name, img); if (sfA && srcA) zip.file(sfA.name, srcA); if (flfA && flagsA) zip.file(flfA.name, flagsA); }
     }
     var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
     return { bytes: outBytes, changed: changed };
@@ -681,7 +683,7 @@ var DLJ = (function () {
      This is the field System Builder's Outputs tab and the hardware actually use. */
   // Edit one PCn= name inside the packed blob (dimmer/DALI). Updates both length bytes and the
   // parallel flags array. Returns true if written. ff/flags are modified in place.
-  function writeBlobName(img, flags, pcNum, name) {
+  function writeBlobName(img, source, flags, pcNum, name) {
     var B = findBlob(img); if (!B) return false;
     var parsed = parseBlobSegs(img, B.textStart);
     var oldTextLen = parsed.textEnd - B.textStart, found = false;
@@ -701,25 +703,31 @@ var DLJ = (function () {
     if (flags) { // 0x06 per text byte; zero the freed tail when shrinking
       for (var q = enc.length; q < oldTextLen; q++) flags[B.textStart + q] = 0x00;
       for (var r = oldTextLen; r < enc.length; r++) flags[B.textStart + r] = 0x06;
-      // mark the live text + the two length bytes dirty → System Builder flags a download
-      markDirty(flags, B.textStart, enc.length);
-      markDirty(flags, B.blobLenOff, 1);
-      markDirty(flags, B.overallLenOff, 1);
     }
+    // put the live text + the two length bytes into "pending download" state
+    markPending(source, flags, B.textStart, enc.length);
+    markPending(source, flags, B.blobLenOff, 1);
+    markPending(source, flags, B.overallLenOff, 1);
     return true;
   }
   // Encode a JS string to a latin1 string whose char codes are the win1255 bytes.
   function win1255AsLatin(s) { var b = win1255Encode(String(s == null ? '' : s)), o = ''; for (var i = 0; i < b.length; i++) o += String.fromCharCode(b[i]); return o; }
 
-  /* Mark a range of the parallel flags image "dirty" so System Builder shows the
-     "needs download" indicator and lets the user push just these bytes to the device.
-     A flag byte with bit 0x04 set is managed/verified content (value 0x06 = in sync);
-     ORing the dirty bit 0x01 makes it 0x07 (modified, pending download) — exactly what
-     System Builder writes when a name/area/channel is edited inside the software.
+  /* Put a range into System Builder's "modified, pending download" state so the
+     "needs download" indicator lights and the user can push just these bytes.
+     Verified empirically from a System-Builder-edited controller: every pending byte
+     has  target = new value,  source = 0xFF (erased = "not confirmed on device"),
+     flag = 0x07 (0x06 managed/in-sync  OR  the 0x01 dirty bit).
+     Setting only the flag is not enough — SB re-derives the state on load and needs the
+     source byte erased to 0xFF. After a real download SB restores source = target, flag = 0x06.
      Background bytes (flag 0x01) and free holes (0x00) are left untouched. */
-  function markDirty(flags, off, len) {
-    if (!flags) return;
-    for (var i = 0; i < len; i++) { var p = off + i; if (p >= 0 && p < flags.length && (flags[p] & 0x04)) flags[p] |= 0x01; }
+  function markPending(source, flags, off, len) {
+    for (var i = 0; i < len; i++) {
+      var p = off + i;
+      if (p < 0) continue;
+      if (source && p < source.length) source[p] = 0xff;
+      if (flags && p < flags.length && (flags[p] & 0x04)) flags[p] |= 0x01;
+    }
   }
 
   async function applyOutputNames(buf, edits, JSZipLib) {
@@ -731,28 +739,31 @@ var DLJ = (function () {
       if (!tf) continue;
       var img = await tf.async('uint8array');
       var outs = edits[duid], touched = false;
+      var sfN = zip.file('Current/Devices/' + duid + '.source.hex') || zip.file(new RegExp(duid + '\\.source\\.hex$', 'i'))[0];
+      var srcN = sfN ? await sfN.async('uint8array') : null;
+      var flfN = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
+      var flagsN = flfN ? await flfN.async('uint8array') : null;
       if (hasNameTable(img)) {
-        // fixed-width table (relay) — also dirty the parallel flags so a download is flagged
-        var flfT = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
-        var flagsT = flfT ? await flfT.async('uint8array') : null;
+        // fixed-width table (relay) — erase source + set dirty flags → System Builder flags a download
         for (var k in outs) {
           var i = +k, off = nameOffset(i);
           if (img[off + NAME_LEN] !== 0x00) continue;
           var bytes = win1255Encode(String(outs[k] == null ? '' : outs[k])).slice(0, NAME_LEN);
           for (var j = 0; j < NAME_LEN; j++) img[off + j] = j < bytes.length ? bytes[j] : 0x20;
           img[off + NAME_LEN] = 0x00;
-          markDirty(flagsT, off, NAME_LEN);
+          markPending(srcN, flagsN, off, NAME_LEN + 1);
           touched = true; changed++;
         }
-        if (touched) { zip.file(tf.name, img); if (flfT && flagsT) zip.file(flfT.name, flagsT); }
       } else if (findBlob(img)) {
-        // packed blob (dimmer/DALI) — also update the parallel flags file
-        var flf = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
-        var flags = flf ? await flf.async('uint8array') : null;
+        // packed blob (dimmer/DALI)
         for (var k2 in outs) {
-          if (writeBlobName(img, flags, (+k2) + 1, outs[k2])) { touched = true; changed++; }
+          if (writeBlobName(img, srcN, flagsN, (+k2) + 1, outs[k2])) { touched = true; changed++; }
         }
-        if (touched) { zip.file(tf.name, img); if (flf && flags) zip.file(flf.name, flags); }
+      }
+      if (touched) {
+        zip.file(tf.name, img);
+        if (sfN && srcN) zip.file(sfN.name, srcN);
+        if (flfN && flagsN) zip.file(flfN.name, flagsN);
       }
     }
     var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
