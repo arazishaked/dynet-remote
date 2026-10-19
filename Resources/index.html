@@ -471,6 +471,32 @@ var DLJ = (function () {
     for (var i = 0; i < count; i++) c.push(((img[CHAN_BASE + 2 * i] << 8) | img[CHAN_BASE + 2 * i + 1]) + 1); // show 1-based
     return c;
   }
+  /* DALI (0x65) and dimmer (0x49) per-output area+channel table. Verified byte-for-byte
+     against System-Builder captures: DALI box 7 (out 18→area99 ch1, out 20→area88 ch6),
+     confirmed across four DALI controllers; dimmer box 11 (out→area77 ch5). The record
+     layout is identical for both device types — 14 bytes per output (0-based output index i):
+       +0 marker (0xFD assigned, 0xFF unassigned), +2..+3 area (16-bit LE), +4 channel (1 byte).
+     Only the table base differs by device type (firmware memory map): DALI 0x10020, dimmer 0x00D0.
+     The text blob's A<area>= / PCn= segments are just a name cache — not needed for the
+     structural assignment (the area-only edits added no new A<area>= segment). */
+  var AC_STRIDE = 14, AC_MARK = 0, AC_AREA = 2, AC_CHAN = 4;
+  function acTableBase(img) {
+    if (!img || !img.length) return -1;
+    if (img[0] === 0x65) return 0x10020;  // DALI
+    if (img[0] === 0x49) return 0x00d0;    // dimmer
+    return -1;
+  }
+  function hasAcTable(img, count) { var b = acTableBase(img); return b >= 0 && img.length >= b + (count || 1) * AC_STRIDE; }
+  function readAcAreas(img, count) {
+    var base = acTableBase(img), a = [];
+    for (var i = 0; i < count; i++) { var m = base + i * AC_STRIDE; a.push(img[m] === 0xfd ? (img[m + AC_AREA] | (img[m + AC_AREA + 1] << 8)) : 0); }
+    return a;
+  }
+  function readAcChans(img, count) {
+    var base = acTableBase(img), c = [];
+    for (var i = 0; i < count; i++) { var m = base + i * AC_STRIDE; c.push(img[m] === 0xfd ? img[m + AC_CHAN] : 1); }
+    return c;
+  }
   // Curtain/blind outputs come in pairs (open+close). System Builder marks the pair in the
   // per-output checksum table at 0x148: the even output's byte = the odd output's byte + 0x30.
   // When detected, BOTH outputs of the pair are curtain (shown with a position slider).
@@ -518,9 +544,16 @@ var DLJ = (function () {
           var blobNames = readBlobNames(img, dv.channels);
           if (blobNames) {
             dv.outNames = blobNames;
-            dv.nameEditable = true;  // packed blob (dimmer/DALI) — names only for now
-            dv.acEditable = false;
+            dv.nameEditable = true;  // packed blob (dimmer/DALI) — names
             dv.nameFormat = 'blob';
+            if (hasAcTable(img, dv.channels)) {
+              // DALI/dimmer: area/channel live in the fixed binary table (not the text blob)
+              dv.outArea = readAcAreas(img, dv.channels);
+              dv.outChan = readAcChans(img, dv.channels);
+              dv.acEditable = true;
+            } else {
+              dv.acEditable = false;
+            }
           }
         }
       }
@@ -660,7 +693,9 @@ var DLJ = (function () {
       var tf = zip.file('Current/Devices/' + duid + '.target.hex') || zip.file(new RegExp(duid + '\\.target\\.hex$', 'i'))[0];
       if (!tf) continue;
       var img = await tf.async('uint8array');
-      if (!hasNameTable(img)) continue;
+      var isTable = hasNameTable(img);
+      var isBlobAc = !isTable && hasAcTable(img, 64);
+      if (!isTable && !isBlobAc) continue;
       var sfA = zip.file('Current/Devices/' + duid + '.source.hex') || zip.file(new RegExp(duid + '\\.source\\.hex$', 'i'))[0];
       var srcA = sfA ? await sfA.async('uint8array') : null;
       var flfA = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
@@ -668,8 +703,17 @@ var DLJ = (function () {
       var touched = false, outs = acEdits[duid];
       for (var k in outs) {
         var i = +k, e = outs[k];
-        if (e.area != null) { var a = e.area & 0xffff; img[AREA_BASE + 2 * i] = (a >> 8) & 0xff; img[AREA_BASE + 2 * i + 1] = a & 0xff; markPending(srcA, flagsA, AREA_BASE + 2 * i, 2); }
-        if (e.chan != null) { var c = (e.chan - 1) & 0xffff; img[CHAN_BASE + 2 * i] = (c >> 8) & 0xff; img[CHAN_BASE + 2 * i + 1] = c & 0xff; markPending(srcA, flagsA, CHAN_BASE + 2 * i, 2); }
+        if (isTable) {
+          // relay: area 16-bit BE @0xA0+2i, channel (0-based) 16-bit BE @0xB8+2i
+          if (e.area != null) { var a = e.area & 0xffff; img[AREA_BASE + 2 * i] = (a >> 8) & 0xff; img[AREA_BASE + 2 * i + 1] = a & 0xff; markPending(srcA, flagsA, AREA_BASE + 2 * i, 2); }
+          if (e.chan != null) { var c = (e.chan - 1) & 0xffff; img[CHAN_BASE + 2 * i] = (c >> 8) & 0xff; img[CHAN_BASE + 2 * i + 1] = c & 0xff; markPending(srcA, flagsA, CHAN_BASE + 2 * i, 2); }
+        } else {
+          // DALI/dimmer: 14-byte record @base+14i — marker 0xFD, area 16-bit LE @+2, channel 1 byte @+4
+          var m = acTableBase(img) + i * AC_STRIDE;
+          img[m + AC_MARK] = 0xfd; markPending(srcA, flagsA, m + AC_MARK, 1);
+          if (e.area != null) { var a2 = e.area & 0xffff; img[m + AC_AREA] = a2 & 0xff; img[m + AC_AREA + 1] = (a2 >> 8) & 0xff; markPending(srcA, flagsA, m + AC_AREA, 2); }
+          if (e.chan != null) { img[m + AC_CHAN] = e.chan & 0xff; markPending(srcA, flagsA, m + AC_CHAN, 1); }
+        }
         touched = true; changed++;
       }
       if (touched) { zip.file(tf.name, img); if (sfA && srcA) zip.file(sfA.name, srcA); if (flfA && flagsA) zip.file(flfA.name, flagsA); }
@@ -822,7 +866,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1019-1144";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1019-1210";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
