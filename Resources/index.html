@@ -777,6 +777,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
+const BUILD_ID = "1019-0705";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1135,7 +1136,7 @@ function render(){
   if(!P && route.tab!=='setup' && route.tab!=='log'){ route.tab='setup'; return render(); }
   if(route.area!=null) return renderArea(m, P.areas[route.area]);
   $('#hTitle').textContent = P ? P.name : 'DyNet Remote';
-  $('#hSub').textContent = P ? `${Object.keys(P.areas).length} אזורים · ${P.deviceOrder.length} בקרים` : 'לא נטען פרויקט';
+  $('#hSub').textContent = (P ? `${Object.keys(P.areas).length} אזורים · ${P.deviceOrder.length} בקרים` : 'לא נטען פרויקט') + (BUILD_ID && BUILD_ID[0] !== '/' ? ` · build ${BUILD_ID}` : '');
   ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup })[route.tab](m);
 }
 function pendingEditCount(){
