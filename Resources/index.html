@@ -770,14 +770,59 @@ var DLJ = (function () {
     return { bytes: outBytes, changed: changed };
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan };
+  /* Mark the given controllers "modified, pending download" in JobData.xml so System
+     Builder lights the download indicator. Verified against a System-Builder-edited
+     controller: the device's DyNetDevice block carries, right before </DyNetDevice>,
+         <DeviceStatus><Status><Modified/></Status><Status><PendingUpdates/></Status></DeviceStatus>
+     whereas an in-sync controller has an empty <DeviceStatus/>. This is the ACTUAL trigger
+     for the indicator — the hex dirty flags alone are not enough. We only replace the empty
+     self-closing form, and only inside the DeviceData block (the one holding <DyNetDevice>). */
+  var DEVICE_STATUS_PENDING =
+    '<DeviceStatus>\n<Status>\n<Modified/>\n</Status>\n<Status>\n<PendingUpdates/>\n</Status>\n</DeviceStatus>';
+  async function applyDeviceStatus(buf, duids, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    if (!duids || !duids.length) return { bytes: buf, changed: 0 };
+    var zip = await Z.loadAsync(buf);
+    var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    if (!f) return { bytes: buf, changed: 0 };
+    var text = decodeXmlBytes(await f.async('uint8array'));
+    var changed = 0;
+    duids.forEach(function (duid) {
+      // locate the DeviceData <Device duid="X"> ... </Device> block (the one with <DyNetDevice>)
+      var open = '<Device duid="' + String(duid).toUpperCase() + '">';
+      var idx = text.indexOf(open);
+      if (idx < 0) { open = '<Device duid="' + duid + '">'; idx = text.indexOf(open); }
+      while (idx >= 0) {
+        var end = text.indexOf('</Device>', idx);
+        if (end < 0) break;
+        var block = text.slice(idx, end);
+        if (block.indexOf('<DyNetDevice') >= 0 && block.indexOf('<DeviceStatus/>') >= 0) {
+          var nb = block.replace('<DeviceStatus/>', DEVICE_STATUS_PENDING);
+          text = text.slice(0, idx) + nb + text.slice(end);
+          changed++;
+          break;
+        }
+        idx = text.indexOf(open, idx + open.length);
+      }
+    });
+    if (changed) {
+      var out = new Uint8Array(2 + text.length * 2);
+      out[0] = 0xff; out[1] = 0xfe;
+      for (var i = 0; i < text.length; i++) { var cc = text.charCodeAt(i); out[2 + i * 2] = cc & 0xff; out[3 + i * 2] = cc >> 8; }
+      zip.file(f.name, out);
+    }
+    var bytes = changed ? await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } }) : buf;
+    return { bytes: bytes, changed: changed };
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1019-0705";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1019-1144";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1480,13 +1525,19 @@ function buildACMovesWithNames(){
 }
 async function applyProjectEdits(base){
   let bytes = base, total = 0;
-  const on = await DLJ.applyOutputNames(bytes, buildOutputNames());
+  const outNames = buildOutputNames(), areaChan = buildAreaChan();
+  const on = await DLJ.applyOutputNames(bytes, outNames);
   bytes = on.bytes; total += on.changed;
-  const ac = await DLJ.applyOutputAreaChan(bytes, buildAreaChan());
+  const ac = await DLJ.applyOutputAreaChan(bytes, areaChan);
   bytes = ac.bytes; total += ac.changed;
   const moves = buildMoves().concat(buildACMovesWithNames()); // the latter self-filters by the per-output choice
   const le = await DLJ.applyEdits(bytes, moves, buildChannelNameMap());
   bytes = le.bytes; total += le.changed;
+  // mark every controller we edited (name/area/channel in its image) as "pending download"
+  // in JobData.xml — this is what lights System Builder's download indicator.
+  const touched = Array.from(new Set(Object.keys(outNames).concat(Object.keys(areaChan))));
+  const ds = await DLJ.applyDeviceStatus(bytes, touched);
+  bytes = ds.bytes; total += ds.changed;
   return { bytes, changed: total };
 }
 async function saveProject(){
