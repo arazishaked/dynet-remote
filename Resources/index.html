@@ -933,7 +933,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1020-1301";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1020-1310";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1750,8 +1750,8 @@ async function flashDevice(duid){
   if(!HAS_TCP || cfg.mode!=='pdeg'){ toast('עדכון בקר דורש חיבור ישיר ל-PDEG (אפליקציית אייפון, מצב PDEG).', 6000); return; }
   let base = origDlj; if(!base){ base = await idb.get('dlj'); origDlj = base; }
   if(!base){ toast('צריך את קובץ הפרויקט. פתח אותו שוב מ-Dropbox.', 6000); return; }
-  let info;
-  try{ const edited = await applyProjectEdits(base); info = await DLJ.deviceFlashChunks(edited.bytes, duid); }
+  let info, edited;
+  try{ edited = await applyProjectEdits(base); info = await DLJ.deviceFlashChunks(edited.bytes, duid); }
   catch(e){ toast('שגיאה בהכנת הנתונים: '+e.message, 6000); return; }
   if(!info || !info.chunks.length){ toast('אין שינויים לעדכן בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000); return; }
   const ok = await confirmModal(
