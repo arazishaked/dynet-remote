@@ -866,7 +866,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1020-1138";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1020-1205";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1882,6 +1882,18 @@ async function dbxApi(ep, args){
   if(!r.ok) throw new Error('Dropbox '+r.status+': '+(await r.text()).slice(0,120)); return r.json();
 }
 const dbxArg = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+// Sort key for a Dropbox file: the date written in its name (DD-MM-YY / DD-MM-YYYY, any of - . / _ or
+// space as separator), as a timestamp. Falls back to the file's modified time when the name has no date.
+function fileDateKey(e){
+  const m = (e.name||'').match(/(\d{1,2})[.\-_\/ ](\d{1,2})[.\-_\/ ](\d{2,4})(?!\d)/);
+  if(m){
+    let d=+m[1], mo=+m[2], y=+m[3];
+    if(mo>12 && d<=12){ const t=d; d=mo; mo=t; }   // tolerate MM-DD-YY just in case
+    if(y<100) y+=2000;
+    if(d>=1 && d<=31 && mo>=1 && mo<=12) return Date.UTC(y, mo-1, d);
+  }
+  return e.server_modified ? Date.parse(e.server_modified) : 0;
+}
 async function dbxBrowse(path){
   const pane = $('#dbxPane'); if(!pane) return; pane.hidden=false;
   if(!cfg.dbxKey){ pane.innerHTML = '<div class="note">הזן קודם App key של Dropbox בכרטיס Dropbox למטה.</div>'; return; }
@@ -1911,6 +1923,10 @@ async function dbxBrowse(path){
     entries.sort((a,b)=>{
       if(a['.tag']!==b['.tag']) return a['.tag']==='folder'?-1:1;
       if(a['.tag']==='folder') return a.name.localeCompare(b.name,'he');
+      // Files: newest→oldest by the date written in the file name (DD-MM-YY, Israeli style),
+      // falling back to Dropbox's modified time. Same date → the later modified time wins.
+      const ka = fileDateKey(a), kb = fileDateKey(b);
+      if(kb !== ka) return kb - ka;
       return (b.server_modified||'').localeCompare(a.server_modified||'');
     });
     const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
