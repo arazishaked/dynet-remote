@@ -886,14 +886,54 @@ var DLJ = (function () {
     return { dcode: tgt[0], box: box, chunks: chunks, dirty: dirty };
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus, deviceFlashChunks: deviceFlashChunks };
+  /* After a successful flash, bring one controller back to the in-sync state — exactly what
+     System Builder does post "Save To Device": source := target (device now matches), clear the
+     dirty bit on every managed byte (0x07 → 0x06), and empty its <DeviceStatus> in JobData.
+     That makes the "modified / pending updates" indicator disappear. */
+  async function clearDeviceDirty(buf, duid, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
+    var tf = pick('target'), ff = pick('flags'), sf = pick('source');
+    if (tf && ff && sf) {
+      var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array'), src = await sf.async('uint8array');
+      var n = Math.min(tgt.length, fl.length, src.length), touched = false;
+      for (var i = 0; i < n; i++) { if ((fl[i] & 0x05) === 0x05) { src[i] = tgt[i]; fl[i] &= 0xFE; touched = true; } }
+      if (touched) { zip.file(sf.name, src); zip.file(ff.name, fl); }
+    }
+    var jf = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    if (jf) {
+      var text = decodeXmlBytes(await jf.async('uint8array'));
+      var open = '<Device duid="' + String(duid).toUpperCase() + '">', idx = text.indexOf(open);
+      if (idx < 0) { open = '<Device duid="' + duid + '">'; idx = text.indexOf(open); }
+      var changed = false;
+      while (idx >= 0) {
+        var end = text.indexOf('</Device>', idx); if (end < 0) break;
+        var block = text.slice(idx, end);
+        if (block.indexOf('<DyNetDevice') >= 0 && block.indexOf(DEVICE_STATUS_PENDING) >= 0) {
+          text = text.slice(0, idx) + block.replace(DEVICE_STATUS_PENDING, '<DeviceStatus/>') + text.slice(end);
+          changed = true; break;
+        }
+        idx = text.indexOf(open, idx + open.length);
+      }
+      if (changed) {
+        var out = new Uint8Array(2 + text.length * 2); out[0] = 0xff; out[1] = 0xfe;
+        for (var k = 0; k < text.length; k++) { var cc = text.charCodeAt(k); out[2 + k * 2] = cc & 0xff; out[3 + k * 2] = cc >> 8; }
+        zip.file(jf.name, out);
+      }
+    }
+    var bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: bytes };
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus, deviceFlashChunks: deviceFlashChunks, clearDeviceDirty: clearDeviceDirty };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1020-1243";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1020-1301";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1725,10 +1765,24 @@ async function flashDevice(duid){
     const o = await native({ kind:'tcpOpen', host:tcpHost(), port:cfg.tcpPort });
     if(!o || o.error) throw new Error('אין חיבור ל-PDEG: '+((o&&o.error)||''));
     await flashRun(info.dcode, info.box, info.chunks, (d,t)=>prog.set(d,t), prog.cancel);
-    prog.msg('✅ העדכון הושלם. הבקר אותחל.');
     logPush('tx', `עדכון בקר: ${dv.name||''} (Box ${info.box}) — ${info.dirty} בייטים, ${info.chunks.length} קטעים`, '');
+    // Post-flash: clear the dirty markers so the "pending update" indicator disappears (like System Builder).
+    prog.msg('✅ נכתב לבקר. מנקה סימון ושומר…');
+    try{
+      const cleaned = await DLJ.clearDeviceDirty(edited.bytes, duid);
+      if(P.source && P.source.dropbox){ await dbxUploadBuffer(P.source.dropbox, cleaned.bytes); }
+      origDlj = cleaned.bytes.buffer; idb.put('dlj', origDlj);
+      if(P.devNames) delete P.devNames[duid];
+      if(P.devAC) delete P.devAC[duid];
+      if(P.reassign) for(const key in P.reassign){ if(key.slice(0, key.lastIndexOf(':'))===duid) delete P.reassign[key]; }
+      persist();
+      prog.msg('✅ העדכון הושלם. הבקר אותחל, והסימון נוקה.');
+    }catch(e){
+      logPush('err', 'ניקוי הסימון אחרי שפיכה נכשל: '+e.message, '');
+      prog.msg('✅ נכתב לבקר, אך ניקוי הסימון נכשל: '+e.message);
+    }
     toast('הבקר עודכן בהצלחה ✅', 5000);
-    await sleep(1400);
+    await sleep(1600);
   }catch(e){
     prog.msg('❌ '+e.message);
     logPush('err', 'עדכון בקר נכשל: '+e.message, '');
@@ -1738,6 +1792,7 @@ async function flashDevice(duid){
     prog.close();
     await native({ kind:'tcpClose' }); await sleep(200);
     tcp.running = false; tcpListen();                    // resume live listening
+    if(route.tab==='devices') renderDevices($('#main'));  // reflect the cleared "pending" markers
   }
 }
 async function saveProject(){
@@ -2129,6 +2184,15 @@ async function dbxOpenFile(id, name){
 }
 /* Apply all project edits (output names + logical renames) to the in-memory file and
    upload the result to Dropbox, overwriting in place. Returns {changed}. */
+/* Upload a specific .dlj buffer over the existing Dropbox file (used after a flash to persist the cleaned state). */
+async function dbxUploadBuffer(id, bytes){
+  const meta = await dbxApi('files/get_metadata', { path:id });
+  const tok = await dbxToken();
+  const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
+    'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:bytes });
+  if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח.');
+  if(!r.ok) throw new Error('העלאה ל-Dropbox נכשלה ('+r.status+')');
+}
 async function dbxSaveProject(id){
   const meta = await dbxApi('files/get_metadata', { path:id });
   const tok = await dbxToken();
