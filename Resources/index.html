@@ -870,15 +870,18 @@ var DLJ = (function () {
     var zip = await Z.loadAsync(buf);
     function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
     var tf = pick('target'), ff = pick('flags'), sf = pick('source');
-    if (!tf || !ff) return null;
-    var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array');
-    var box = tgt[2];
-    if (sf) { var s = await sf.async('uint8array'); if (s.length > 2) box = s[2]; }
-    var chunks = [], dirty = 0, N = Math.min(tgt.length, fl.length), i = 0;
+    if (!tf || !ff || !sf) return null;
+    var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array'), src = await sf.async('uint8array');
+    var box = (src.length > 2) ? src[2] : tgt[2];
+    // System Builder's "Save To Device" writes every MANAGED byte (flag bit 0x04) whose desired
+    // value (target) differs from what it last knew is on the device (source) — NOT just the ones
+    // flagged "modified". Verified byte-for-byte against SB flash captures. Group into <=15-byte runs.
+    var dirty_byte = function (i) { return (fl[i] & 0x04) && src[i] !== tgt[i]; };
+    var chunks = [], dirty = 0, N = Math.min(tgt.length, fl.length, src.length), i = 0;
     while (i < N) {
-      if ((fl[i] & 0x05) === 0x05) {          // managed (0x04) + dirty (0x01)
+      if (dirty_byte(i)) {
         var start = i;
-        while (i < N && (fl[i] & 0x05) === 0x05 && (i - start) < 15) i++;
+        while (i < N && dirty_byte(i) && (i - start) < 15) i++;
         chunks.push({ addr: start, data: tgt.slice(start, i) });
         dirty += (i - start);
       } else i++;
@@ -898,7 +901,8 @@ var DLJ = (function () {
     if (tf && ff && sf) {
       var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array'), src = await sf.async('uint8array');
       var n = Math.min(tgt.length, fl.length, src.length), touched = false;
-      for (var i = 0; i < n; i++) { if ((fl[i] & 0x05) === 0x05) { src[i] = tgt[i]; fl[i] &= 0xFE; touched = true; } }
+      // Mark every byte we just flashed as in-sync: source := target, clear the dirty bit.
+      for (var i = 0; i < n; i++) { if ((fl[i] & 0x04) && src[i] !== tgt[i]) { src[i] = tgt[i]; fl[i] &= 0xFE; touched = true; } }
       if (touched) { zip.file(sf.name, src); zip.file(ff.name, fl); }
     }
     var jf = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
@@ -933,7 +937,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1020-1310";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1020-1333";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1519,7 +1523,7 @@ function startRenameOutput(duid, pc, cell){
   const cur = (dv.outNames && dv.outNames[pc]) || '';
   const maxLen = dv.nameFormat === 'table' ? 17 : 24;
   cell.innerHTML = `<span class="rename"><input value="${esc(cur)}" maxlength="${maxLen}" aria-label="שם היציאה"><button class="btn primary" data-ok>שמור</button><button class="btn ghost" data-cancel>ביטול</button></span>`;
-  const inp = cell.querySelector('input'); inp.focus(); inp.select();
+  const inp = cell.querySelector('input'); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);  // cursor at end — don't select-all so you can edit, not overwrite
   const done = save => {
     if(save){ const v = inp.value.trim();
       if(v !== cur){
@@ -1540,6 +1544,22 @@ function startRenameOutput(duid, pc, cell){
 /* Pending per-output name edits, as DLJ.applyOutputNames expects them. */
 function buildOutputNames(){ return (P && P.devNames) || {}; }
 function buildAreaChan(){ return (P && P.devAC) || {}; }
+/* Reflect an output→area/channel assignment in the in-memory logical model (P.areas / physMap),
+   so it shows up immediately in the "אזורים" tab — mirroring the logical channel that gets written
+   to the file on save. Moves the output out of any channel it currently sits in. */
+function assignLogicalInMemory(duid, pc, area, chan, name){
+  const DU = String(duid).toUpperCase();
+  const same = p => String(p[0]).toUpperCase()===DU && p[1]===pc;
+  if(!P.areas[area]) P.areas[area] = { id:area, name:'', path:[], presets:{}, channels:[], devices:[] };
+  for(const aid in P.areas) for(const ch of P.areas[aid].channels) if(ch.phys) ch.phys = ch.phys.filter(p=>!same(p));
+  const A = P.areas[area];
+  let ch = A.channels.find(c=>c.id===chan);
+  if(!ch){ ch = { id:chan, name:name||'', type:1, desc:'', phys:[] }; A.channels.push(ch); A.channels.sort((x,y)=>x.id-y.id); }
+  if(name) ch.name = name;
+  ch.phys = ch.phys || []; if(!ch.phys.some(same)) ch.phys.push([DU, pc]);
+  if(!A.devices.includes(DU)) A.devices.push(DU);
+  P.physMap[duid] = P.physMap[duid] || {}; P.physMap[duid][pc] = [[area, chan]];
+}
 /* Edit a controller output's Area + Channel (written to the controller memory, like System Builder).
    Shows a list of existing areas (with their numbers) and their channels (with numbers), plus the
    option to type any area/channel number — including a brand-new channel. */
@@ -1577,8 +1597,9 @@ function startEditAreaChan(duid, pc, cell){
         const logical = await confirmModal(`האם לשמור בבקר? (לכתוב את יציאה ${pc+1} גם כערוץ לוגי — שם + אזור + ערוץ)`);
         P.devAC[duid] = P.devAC[duid] || {};
         P.devAC[duid][pc] = { area, chan, logical };
+        if(logical) assignLogicalInMemory(duid, pc, area, chan, (dv.outNames && dv.outNames[pc]) || '');  // reflect it live in the Areas view
         persist();
-        toast(logical ? 'יישמר לבקר ולערוץ לוגי. לחץ שמור בסוף.' : 'עודכן לבקר. לחץ שמור בסוף.');
+        toast(logical ? 'עודכן — מופיע עכשיו גם בלשונית „אזורים”. לחץ שמור בסוף.' : 'עודכן לבקר. לחץ שמור בסוף.');
       }
     }
     renderDevices($('#main'));
@@ -1714,7 +1735,7 @@ async function flashSendAck(frame, addr, timeoutMs){
   }
   return null;
 }
-async function flashRun(dstDev, dstBox, chunks, onProg, cancel){
+async function flashRun(dstDev, dstBox, chunks, channels, onProg, cancel){
   flashRx = new Uint8Array(0);
   await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(DyNet2.silence(dstDev, dstBox)) });
   await sleep(150);
@@ -1725,6 +1746,11 @@ async function flashRun(dstDev, dstBox, chunks, onProg, cancel){
     for(let t=0; t<3 && !ack; t++) ack = await flashSendAck(fr, c.addr, 2500);
     if(!ack) throw new Error(`אין אישור מהבקר בכתובת 0x${c.addr.toString(16)} (קטע ${k+1}/${chunks.length})`);
     onProg(k+1, chunks.length);
+  }
+  // Like System Builder: set every physical output to 0% so the controller applies the new config cleanly.
+  for(let ch=1; ch<=(channels||0); ch++){
+    await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(DyNet.physLevel(dstDev, dstBox, ch, 0)) });
+    await sleep(60);
   }
   await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(DyNet2.reset(dstDev, dstBox)) });  // reboot the controller
   await sleep(400);
@@ -1764,7 +1790,7 @@ async function flashDevice(duid){
     await native({ kind:'tcpClose' }); await sleep(350);
     const o = await native({ kind:'tcpOpen', host:tcpHost(), port:cfg.tcpPort });
     if(!o || o.error) throw new Error('אין חיבור ל-PDEG: '+((o&&o.error)||''));
-    await flashRun(info.dcode, info.box, info.chunks, (d,t)=>prog.set(d,t), prog.cancel);
+    await flashRun(info.dcode, info.box, info.chunks, dv.channels||0, (d,t)=>prog.set(d,t), prog.cancel);
     logPush('tx', `עדכון בקר: ${dv.name||''} (Box ${info.box}) — ${info.dirty} בייטים, ${info.chunks.length} קטעים`, '');
     // Post-flash: clear the dirty markers so the "pending update" indicator disappears (like System Builder).
     prog.msg('✅ נכתב לבקר. מנקה סימון ושומר…');
