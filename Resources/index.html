@@ -866,7 +866,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1019-1210";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1020-1138";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1818,6 +1818,12 @@ function renderSetup(m){
    so it uses Dropbox's "show me a code" flow (PKCE, no redirect). */
 function b64url(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
 let dbxVerifierMem = '';
+// GitHub Pages redirect page. After the user authorises, Dropbox redirects here with ?code=…,
+// and the page hands the code back to the app via the dynetremote:// deep link (see dbx.html).
+const DBX_REDIRECT = 'https://arazishaked.github.io/dynet-auth/';
+// Use the redirect flow only in the native app, where the dynetremote:// deep link can bring the
+// code back automatically. Elsewhere (Scriptable / web on the PDEG) fall back to the paste-the-code flow.
+const DBX_USE_REDIRECT = NATIVE;
 async function dbxAuthUrl(){
   const v = b64url(crypto.getRandomValues(new Uint8Array(48)));
   const ch = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
@@ -1826,23 +1832,49 @@ async function dbxAuthUrl(){
   dbxVerifierMem = v;
   if(NATIVE){ KV['dbxVerifier'] = JSON.stringify(v); await native({ kind:'kvset', key:'dbxVerifier', value:KV['dbxVerifier'] }); }
   else store.set('dbxVerifier', v);
+  const p = { client_id:cfg.dbxKey, response_type:'code', code_challenge:ch, code_challenge_method:'S256', token_access_type:'offline' };
+  if(DBX_USE_REDIRECT) p.redirect_uri = DBX_REDIRECT;   // must exactly match a URI registered in the Dropbox App Console
   const u = new URL('https://www.dropbox.com/oauth2/authorize');
-  u.search = new URLSearchParams({ client_id:cfg.dbxKey, response_type:'code', code_challenge:ch, code_challenge_method:'S256', token_access_type:'offline' });
+  u.search = new URLSearchParams(p);
   return u.toString();
 }
 async function dbxExchange(code){
-  const body = new URLSearchParams({ code:code.trim(), grant_type:'authorization_code', client_id:cfg.dbxKey, code_verifier: dbxVerifierMem || store.get('dbxVerifier','') });
-  const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body });
+  const p = { code:code.trim(), grant_type:'authorization_code', client_id:cfg.dbxKey, code_verifier: dbxVerifierMem || store.get('dbxVerifier','') };
+  if(DBX_USE_REDIRECT) p.redirect_uri = DBX_REDIRECT;   // must match the redirect_uri used in the authorize request
+  const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams(p) });
   const j = await r.json(); if(!r.ok) throw new Error(j.error_description || 'הקוד לא התקבל. נסה שוב.');
   store.set('dbx', { access:j.access_token, refresh:j.refresh_token, exp:Date.now()+j.expires_in*1000 }); store.del('dbxVerifier');
 }
+// Called by the native host (App.swift .onOpenURL) when the dynetremote://auth?code=… deep link fires,
+// so the Dropbox connection completes automatically with no copy-paste.
+window.__dbxDeepCode = async function(code){
+  if(!code) return;
+  try{
+    await dbxExchange(code);
+    dbxAwaitingCode = false;
+    toast('מחובר ל-Dropbox');
+    if($('#dbxPane') && !$('#dbxPane').hidden) dbxBrowse('');
+    else if(typeof renderSetup==='function' && $('#main')) renderSetup($('#main'));
+  }catch(e){ logPush('err', 'Dropbox: '+e.message); toast('חיבור Dropbox נכשל: '+e.message, 6000); }
+};
 async function dbxToken(){
   const t = store.get('dbx', null); if(!t) return null;
   if(t.manual) return t.access;                // token pasted from the console; no refresh
   if(Date.now() < t.exp - 60000) return t.access;
-  const r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams({ grant_type:'refresh_token', refresh_token:t.refresh, client_id:cfg.dbxKey }) });
-  const j = await r.json(); if(!r.ok){ store.del('dbx'); return null; }
-  t.access=j.access_token; t.exp=Date.now()+j.expires_in*1000; store.set('dbx', t); return t.access;
+  if(!t.refresh){ return null; }               // nothing to refresh with, but keep whatever we have
+  let r, j;
+  try{
+    r = await xfetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams({ grant_type:'refresh_token', refresh_token:t.refresh, client_id:cfg.dbxKey }) });
+    j = await r.json();
+  }catch(e){ return null; }                     // transient/network error — DON'T wipe the login, just retry next time
+  if(!r.ok){
+    // Only forget the connection if Dropbox says the refresh token itself is dead.
+    if(j && (j.error==='invalid_grant' || j.error==='invalid_client')){ store.del('dbx'); }
+    return null;
+  }
+  t.access=j.access_token; t.exp=Date.now()+j.expires_in*1000;
+  if(j.refresh_token) t.refresh=j.refresh_token; // Dropbox may rotate it
+  store.set('dbx', t); return t.access;
 }
 async function dbxApi(ep, args){
   const tok = await dbxToken(); if(!tok) throw new Error('יש להתחבר ל-Dropbox מחדש');
@@ -1856,9 +1888,12 @@ async function dbxBrowse(path){
   let tok=null; try{ tok = await dbxToken(); }catch(e){}
   if(!tok){
     const url = await dbxAuthUrl();
-    pane.innerHTML = `<div class="note">1. פתח את דף Dropbox, התחבר עם שם המשתמש והסיסמה ואשר גישה.<br>2. Dropbox יציג קוד. העתק אותו והדבק כאן.</div>
+    const note = DBX_USE_REDIRECT
+      ? `1. לחץ "פתח את Dropbox", התחבר ואשר גישה.<br>2. ההתחברות תחזור לאפליקציה <b>אוטומטית</b> — התחברות חד-פעמית שלא פגה.<br><span class="muted">אם לא חזר אוטומטית: הדף יציג קוד — העתק אותו והדבק כאן.</span>`
+      : `1. פתח את דף Dropbox, התחבר עם שם המשתמש והסיסמה ואשר גישה.<br>2. Dropbox יציג קוד. העתק אותו והדבק כאן.`;
+    pane.innerHTML = `<div class="note">${note}</div>
       <div class="actions">${NATIVE ? `<button class="btn primary" id="dbxOpenUrl">פתח את Dropbox</button>` : `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">פתח את Dropbox</a>`}</div>
-      <div class="sendbar"><input id="dbxCode" placeholder="הדבק את הקוד" autocomplete="off"><button class="btn primary" id="dbxCodeOk">אישור</button></div>`;
+      <div class="sendbar"><input id="dbxCode" placeholder="קוד (רק אם לא חזר אוטומטית)" autocomplete="off"><button class="btn primary" id="dbxCodeOk">אישור</button></div>`;
     dbxAwaitingCode = true;
     $('#dbxOpenUrl') && ($('#dbxOpenUrl').onclick = () => native({ kind:'open', url }));
     $('#dbxCodeOk').onclick = async (ev) => {

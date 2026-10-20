@@ -30,6 +30,10 @@ targets:
         CFBundleDisplayName: DyNet Remote
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.topaudio.dynetremote.auth
+            CFBundleURLSchemes:
+              - dynetremote
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         NSLocalNetworkUsageDescription: "DyNet Remote שולט בבקרי התאורה של Dynalite ברשת המקומית שלך."
