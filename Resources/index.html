@@ -134,6 +134,8 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:28px;dire
 .dev .kind[data-k="relay"],.dev .kind[data-k="load"],.dev .kind[data-k="dali"]{background:var(--accent-soft)}
 .pchs{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;padding:4px 14px 12px 14px;font-size:13px;align-items:center}
 .pchs .map{min-width:0}
+.devact{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 14px 12px 14px}
+.btn.sm{padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
 .pchs .oc{display:flex;align-items:center;gap:6px}
 .pchs .n{font-family:var(--mono);color:var(--muted);text-align:end}
 .chedit{display:inline-flex;align-items:center;gap:3px;cursor:pointer;border-radius:6px;padding:1px 3px}
@@ -859,14 +861,39 @@ var DLJ = (function () {
     return { bytes: bytes, changed: changed };
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus };
+  /* Build the EEPROM write plan to flash one controller: the bytes the file marks "modified,
+     pending download" (flag 0x07 = managed+dirty, bit2|bit0), grouped into contiguous runs and
+     split into <=15-byte chunks, carrying the TARGET (desired) values. This is exactly the set
+     System Builder writes on "Save To Device". Returns { dcode, box, chunks:[{addr,data}], dirty }. */
+  async function deviceFlashChunks(buf, duid, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
+    var tf = pick('target'), ff = pick('flags'), sf = pick('source');
+    if (!tf || !ff) return null;
+    var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array');
+    var box = tgt[2];
+    if (sf) { var s = await sf.async('uint8array'); if (s.length > 2) box = s[2]; }
+    var chunks = [], dirty = 0, N = Math.min(tgt.length, fl.length), i = 0;
+    while (i < N) {
+      if ((fl[i] & 0x05) === 0x05) {          // managed (0x04) + dirty (0x01)
+        var start = i;
+        while (i < N && (fl[i] & 0x05) === 0x05 && (i - start) < 15) i++;
+        chunks.push({ addr: start, data: tgt.slice(start, i) });
+        dirty += (i - start);
+      } else i++;
+    }
+    return { dcode: tgt[0], box: box, chunks: chunks, dirty: dirty };
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus, deviceFlashChunks: deviceFlashChunks };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1020-1205";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1020-1243";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1013,6 +1040,47 @@ const DyNet = {
     if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':'ערוץ '+(d1+1)} → ${this.lpct(d2)}%` };
     if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
     return { hex, kind:'other', text:`${an} · opcode 0x${hex2(op)}` };
+  }
+};
+/* ───────── DyNet2 device-memory protocol (controller flashing / "Save To Device") ─────────
+   Frame: AC <N> <op> <srcDev> <srcBox:2BE> <dstDev> <dstBox:2BE> <payload> <pad to x4> <sum2> <sum1>
+   N = frameLen/4 − 1 ; checksum = Fletcher-16 mod 256 as [sum2,sum1]. Verified byte-perfect
+   against a System Builder flash capture (165/165 write frames reproduced). Programming source
+   is System Builder's own address (0xDA, box 1), so the controller replies route back to us. */
+const PROG_DEV = 0xDA, PROG_BOX = 0x0001;
+const DyNet2 = {
+  fletcher(bytes){ let s1=0,s2=0; for(const b of bytes){ s1=(s1+b)&0xff; s2=(s2+s1)&0xff; } return [s2,s1]; },
+  frame(op, srcDev, srcBox, dstDev, dstBox, payload){
+    const core = [op, srcDev&0xff, (srcBox>>8)&0xff, srcBox&0xff, dstDev&0xff, (dstBox>>8)&0xff, dstBox&0xff].concat(payload);
+    const pad = (-(2 + core.length + 2)) & 3;            // pad whole frame to a multiple of 4
+    for(let k=0;k<pad;k++) core.push(0x00);
+    const N = ((2 + core.length + 2) >> 2) - 1;
+    const head = [0xAC, N].concat(core);
+    return Uint8Array.from(head.concat(this.fletcher(head)));
+  },
+  writeMem(dstDev, dstBox, addr, data){
+    const p = [0x00, (addr>>16)&0xff, (addr>>8)&0xff, addr&0xff, (data.length>>8)&0xff, data.length&0xff];
+    for(const b of data) p.push(b&0xff);
+    return this.frame(0x9C, PROG_DEV, PROG_BOX, dstDev, dstBox, p);
+  },
+  silence(dstDev, dstBox){ return this.frame(0x80, PROG_DEV, PROG_BOX, dstDev, dstBox, [0x08]); },
+  reset(dstDev, dstBox){   return this.frame(0x80, PROG_DEV, PROG_BOX, dstDev, dstBox, [0x00]); },
+  // Pull complete AC frames out of a byte buffer. Returns [remaining, frames[]]; drops noise.
+  pull(buf){
+    const frames = [];
+    let i = 0;
+    while(i < buf.length){
+      if(buf[i] !== 0xAC){ i++; continue; }
+      if(i + 2 > buf.length) break;
+      const len = (buf[i+1] + 1) * 4;
+      if(len < 4 || len > 64){ i++; continue; }
+      if(i + len > buf.length) break;                     // wait for the rest
+      const fr = buf.slice(i, i+len);
+      const ck = this.fletcher(fr.slice(0, -2));
+      if(ck[0]===fr[len-2] && ck[1]===fr[len-1]){ frames.push(fr); i += len; }
+      else i++;                                            // bad checksum → resync
+    }
+    return [buf.slice(i), frames];
   }
 };
 function FrameReader(onFrame){
@@ -1584,6 +1652,94 @@ async function applyProjectEdits(base){
   bytes = ds.bytes; total += ds.changed;
   return { bytes, changed: total };
 }
+
+/* ───────── Flash a controller ("Save To Device") over the PDEG ─────────
+   Writes only the bytes the file marks dirty (flag 0x07), exactly like System Builder:
+   Silence → write each <=15-byte chunk and wait for the controller's ack → Reset. */
+let flashRx = new Uint8Array(0);
+function u8concat(a, b){ const n = new Uint8Array(a.length + b.length); n.set(a); n.set(b, a.length); return n; }
+async function flashSendAck(frame, addr, timeoutMs){
+  await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(frame) });
+  const end = Date.now() + timeoutMs;
+  while(Date.now() < end){
+    const r = await native({ kind:'tcpPoll', wait:1 });
+    if(r && r.error) throw new Error('שגיאת תקשורת מול ה-PDEG');
+    if(r && r.b64){
+      flashRx = u8concat(flashRx, b64ToU8(r.b64));
+      let frames; [flashRx, frames] = DyNet2.pull(flashRx);
+      for(const f of frames){
+        if(f[2] === 0x9D){ const a = (f[10]<<16)|(f[11]<<8)|f[12]; if(a === addr) return f; }  // write-reply for this address
+      }
+    }
+  }
+  return null;
+}
+async function flashRun(dstDev, dstBox, chunks, onProg, cancel){
+  flashRx = new Uint8Array(0);
+  await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(DyNet2.silence(dstDev, dstBox)) });
+  await sleep(150);
+  for(let k=0;k<chunks.length;k++){
+    if(cancel.v) throw new Error('בוטל על ידך');
+    const c = chunks[k], fr = DyNet2.writeMem(dstDev, dstBox, c.addr, c.data);
+    let ack = null;
+    for(let t=0; t<3 && !ack; t++) ack = await flashSendAck(fr, c.addr, 2500);
+    if(!ack) throw new Error(`אין אישור מהבקר בכתובת 0x${c.addr.toString(16)} (קטע ${k+1}/${chunks.length})`);
+    onProg(k+1, chunks.length);
+  }
+  await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(DyNet2.reset(dstDev, dstBox)) });  // reboot the controller
+  await sleep(400);
+}
+function progressModal(title){
+  const ov = document.createElement('div'); ov.className = 'modal-ov';
+  const cancel = { v:false };
+  ov.innerHTML = `<div class="modal"><div class="modal-msg">${esc(title)}</div>
+    <div id="pmTxt" style="font-size:13px;color:var(--muted);margin:6px 0">מתחיל…</div>
+    <div style="height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:8px 0"><div id="pmBar" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div></div>
+    <div class="modal-btns"><button class="btn ghost" id="pmCancel">ביטול</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#pmCancel').onclick = () => { cancel.v = true; ov.querySelector('#pmTxt').textContent = 'מבטל…'; };
+  return {
+    cancel,
+    set(done,total){ const p = Math.round(done/total*100); ov.querySelector('#pmBar').style.width = p+'%'; ov.querySelector('#pmTxt').textContent = `כותב קטע ${done} מתוך ${total} (${p}%)`; },
+    msg(t){ ov.querySelector('#pmTxt').textContent = t; },
+    close(){ ov.remove(); }
+  };
+}
+async function flashDevice(duid){
+  const dv = P && P.devices[duid]; if(!dv) return;
+  if(!HAS_TCP || cfg.mode!=='pdeg'){ toast('עדכון בקר דורש חיבור ישיר ל-PDEG (אפליקציית אייפון, מצב PDEG).', 6000); return; }
+  let base = origDlj; if(!base){ base = await idb.get('dlj'); origDlj = base; }
+  if(!base){ toast('צריך את קובץ הפרויקט. פתח אותו שוב מ-Dropbox.', 6000); return; }
+  let info;
+  try{ const edited = await applyProjectEdits(base); info = await DLJ.deviceFlashChunks(edited.bytes, duid); }
+  catch(e){ toast('שגיאה בהכנת הנתונים: '+e.message, 6000); return; }
+  if(!info || !info.chunks.length){ toast('אין שינויים לעדכן בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000); return; }
+  const ok = await confirmModal(
+    `לעדכן את הבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\n${info.dirty} בייטים ב-${info.chunks.length} קטעים ייכתבו לזיכרון הבקר הפיזי, והבקר יאותחל.\n\n⚠️ ודא שבדקת את השינויים ב-System Builder. הפעולה משנה את החומרה.`,
+    'כן, עדכן בקר', 'ביטול');
+  if(!ok) return;
+  const prog = progressModal(`מעדכן את "${dv.name||KIND[dv.kind]}" (Box ${info.box})`);
+  tcp.running = false;                                   // pause live listening — take over the link
+  try{
+    await native({ kind:'tcpClose' }); await sleep(350);
+    const o = await native({ kind:'tcpOpen', host:tcpHost(), port:cfg.tcpPort });
+    if(!o || o.error) throw new Error('אין חיבור ל-PDEG: '+((o&&o.error)||''));
+    await flashRun(info.dcode, info.box, info.chunks, (d,t)=>prog.set(d,t), prog.cancel);
+    prog.msg('✅ העדכון הושלם. הבקר אותחל.');
+    logPush('tx', `עדכון בקר: ${dv.name||''} (Box ${info.box}) — ${info.dirty} בייטים, ${info.chunks.length} קטעים`, '');
+    toast('הבקר עודכן בהצלחה ✅', 5000);
+    await sleep(1400);
+  }catch(e){
+    prog.msg('❌ '+e.message);
+    logPush('err', 'עדכון בקר נכשל: '+e.message, '');
+    toast('העדכון נכשל: '+e.message, 7000);
+    await sleep(2600);
+  }finally{
+    prog.close();
+    await native({ kind:'tcpClose' }); await sleep(200);
+    tcp.running = false; tcpListen();                    // resume live listening
+  }
+}
 async function saveProject(){
   try{
     toast('מעדכן את קובץ הפרויקט…');
@@ -1670,7 +1826,8 @@ function renderDevices(m){
     const meta = [dv.box!=null ? 'Box '+dv.box : '', dv.dcode!=null ? '0x'+hex2(dv.dcode) : '', dv.channels ? dv.channels+' out' : '', dv.fw ? 'FW '+dv.fw : '', dv.serial ? 'S/N '+dv.serial : ''].filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
     return `<details class="dev" data-duid="${dv.duid}" ${(q || openDevs.has(dv.duid))?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>
       <span class="nm"><div>${esc(dv.name || '(ללא שם)')}</div><div class="dmeta">${meta}</div></span></summary>
-      ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}</details>`;
+      ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}
+      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact"><button class="btn primary sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button><span class="muted" style="font-size:11px">שופך לבקר רק את מה ששונה</span></div>` : ''}</details>`;
   };
   const st = Object.values(devStatus); const on = st.filter(s=>s==='online').length, off = st.filter(s=>s==='offline').length;
   m.innerHTML = `${editsBanner()}
@@ -1699,6 +1856,7 @@ function renderDevices(m){
     sl.addEventListener('change', ()=>{ act(GW.physical(dv, +ch, +sl.value)); });
   });
   m.querySelectorAll('[data-lout]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=t.dataset.lout.split(':').map(Number); act(GW.level(aid, cid, t.getAttribute('aria-checked')!=='true' ? 100 : 0, 0)); }));
+  m.querySelectorAll('[data-flash]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); flashDevice(b.dataset.flash); }));
   $('#stRefresh').addEventListener('click', () => act(GW.deviceStatus().then(() => renderDevices(m))));
   for(const a in live) updateLive(+a);
 }
