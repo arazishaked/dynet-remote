@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1159";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1213";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1087,7 +1087,7 @@ const onGateway = () => location.protocol==='http:' && /^(\d+\.){3}\d+$|\.local$
 
 /* ───────── settings ───────── */
 const DBX_APP_KEY = '0lg7wbsl4j5px1t';   // the project's Dropbox app key — always restored if it goes missing
-const cfg = Object.assign({ mode: (onGateway() || NATIVE) ? 'pdeg' : 'sim', base: NATIVE ? 'http://192.168.1.200' : '', fade:2, dbxKey:'', tcpPort:95 }, store.get('cfg', {}));
+const cfg = Object.assign({ mode: (onGateway() || NATIVE) ? 'pdeg' : 'sim', base: NATIVE ? 'http://192.168.1.200' : '', fade:2, dbxKey:'', tcpPort:95, ctrl:'http' }, store.get('cfg', {}));
 if(NATIVE && !cfg.base) cfg.base = 'http://192.168.1.200';
 if(!cfg.tcpPort) cfg.tcpPort = 95;
 delete cfg.physAreas;
@@ -1155,9 +1155,15 @@ const DyNet = {
       if(op===0x22) return { hex, skip:true };           // level poll request (the 0x23 reply carries the value)
       // ── Logical area/channel addressing (high address byte 0x00) ──
       if(dDev===0x00){
-        const area=b[7], ch=b[11], an=areaLabel(area), chTxt = ch ? ' · ערוץ '+ch : '';
+        const area=b[7], an=areaLabel(area);
+        const ch = b.length>=16 ? b[11] : 0;             // channel in payload[2]; only on full frames
+        const chTxt = ch ? ' · '+chLabel(area, ch) : '';
         if(op===0x23){                                   // channel level reply → area · channel · %
           const pct=Math.min(100, Math.round(b[14]/2.55));
+          return { hex, kind:'level', area, ch, pct, text:`${an}${chTxt} · ${pct}%` };
+        }
+        if(op===0x10){                                   // fade/set channel → target level in byte 12
+          const pct=Math.min(100, Math.round(b[12]/2.55));
           return { hex, kind:'level', area, ch, pct, text:`${an}${chTxt} · ${pct}%` };
         }
         return { hex, kind:'area', area, ch, text:`${an}${chTxt}` };
@@ -1192,8 +1198,8 @@ const DyNet = {
     if(op<=3 || (op>=0x0A && op<=0x0D)){ const p=d3*8+(op<=3?op:op-6)+1; return { hex, kind:'preset', area, preset:p, text:`${an} · פריסט P${p}` }; }
     if(op===0x04) return { hex, kind:'preset', area, preset:4, text:`${an} · כיבוי` };
     if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · פריסט P${d1+d3*8+1}` };
-    if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ערוץ ${d1+1} · ${this.lpct(d3)}%` };
-    if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':'ערוץ '+(d1+1)} → ${this.lpct(d2)}%` };
+    if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ${chLabel(area, d1+1)} · ${this.lpct(d3)}%` };
+    if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':chLabel(area, d1+1)} → ${this.lpct(d2)}%` };
     if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
     return { hex, kind:'other', text:`${an} · פעולה` };
   }
@@ -1316,16 +1322,35 @@ function gwFetch(path, opts={}){
     });
 }
 const num = t => { const m = /=\s*(-?\d+)/.exec(t) || /(-?\d+)\s*$/.exec(t); return m ? +m[1] : NaN; };
+// Control transport: 'http' = PDEG web API; 'dynet' = raw DyNet over TCP 95 (independent of the web server).
+const useDynet = () => cfg.ctrl==='dynet' && HAS_TCP && cfg.mode==='pdeg';
+// DyNet1 logical "fade channel area to level" (0x1C/0x71) — understood by DyNet1 and DyNet2 controllers alike.
+function dynetAreaLevel(area, ch /*0-based or 0xFF*/, pct){
+  const lvl = 255 - Math.round(Math.max(0,Math.min(100,pct))*2.54);
+  return DyNet.frame([0x1C, area&0xff, ch&0xff, 0x71, lvl, 0, 0]);
+}
 const GW = {
   async preset(a, p, fade){
+    // Presets stay on the (working) web API until a bus capture confirms the recall frame.
     await gwFetch(`/SetDyNet.cgi?a=${a}&p=${p}&f=${fade}&_=${Date.now()}`);
     logPush('tx', `${areaLabel(a)} · פריסט P${p} · דעיכה ${fade} ש׳`);
     setLive(a, { preset:p });
   },
   async level(a, c, pct, fade){
+    if(useDynet()){ await this.levelDynet(a, c, pct); setLive(a, { level:[c,pct] }); return; }
     await gwFetch(`/SetDyNet.cgi?a=${a}&c=${c}&l=${pct}&f=${fade}&j=255`);
-    logPush('tx', `${areaLabel(a)} · ערוץ ${c} → ${pct}%`);
+    logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a, c)} → ${pct}%`);
     setLive(a, { level:[c,pct] });
+  },
+  /* Set an area/channel over DyNet: one DyNet1 logical "fade channel area to level" message.
+     The controllers resolve it to their outputs — efficient (one frame) and DyNet1/DyNet2 compatible. */
+  async levelDynet(a, c, pct){
+    await this.sendFrame(dynetAreaLevel(a, c===0?0xFF:(c-1), pct), `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a,c)} → ${pct}%`);
+  },
+  async sendFrame(fr, logText){
+    const r = await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(fr) });
+    if(!r || r.error){ logPush('err', 'שליחת DyNet נכשלה: '+((r&&r.error)||''), tcpHost()+':'+cfg.tcpPort); throw new Error('אין חיבור TCP ל-PDEG ('+tcpHost()+':'+cfg.tcpPort+').'); }
+    logPush('tx', logText, Array.from(fr, hex2).join(' '));
   },
   /* Single output on one controller: physical DyNet message straight to the PDEG over TCP */
   async physical(dv, ch, pct){
@@ -1353,7 +1378,7 @@ const GW = {
   },
   async getLevel(a, c){
     const t = await gwFetch(`/GetDyNet.cgi?a=${a}&c=${c}&_=${Date.now()}`); const v = num(t);
-    logPush('rx', `${areaLabel(a)} · ערוץ ${c} · ${v}%`, t);
+    logPush('rx', `${areaLabel(a)} · ${chLabel(a, c)} · ${v}%`, t);
     if(!isNaN(v)) setLive(a, { level:[c,v] }); return v;
   },
   async post(req){
@@ -1376,6 +1401,7 @@ const GW = {
   async ident(){ return (await this.post({ main:'device', sub:'identification', find:'all' })).value; }
 };
 function areaLabel(id){ const a=P&&P.areas[id]; return a && a.name ? `${a.name} (${id})` : 'אזור '+id; }
+function chLabel(area, cn){ if(!cn) return ''; const c = P && findCh(area, cn); return c ? chName(c) : 'ערוץ '+cn; }
 function setLive(a, u){
   const L = live[a] = live[a] || { preset:null, levels:{} };
   if(u.preset!=null) L.preset = u.preset;
@@ -2293,6 +2319,12 @@ function renderSetup(m){
       </div>
       ${CAN_PHYS ? `<div class="grid2"><div class="field"><label>${HAS_TCP?'חיבור TCP לשליטה ביציאות':'שליטה ביציאות'}</label><div class="note" id="tcpState">${HAS_TCP ? ({ on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[tcp.state]) : 'דרך פורט ה-DyNet של ה-PDEG'}</div></div><div class="field"><label for="tcpPort">פורט DyNet</label><input id="tcpPort" class="ltr" inputmode="numeric" value="${esc(cfg.tcpPort)}"></div></div>` : ''}
       <div class="field" id="baseField"><label for="base">כתובת ה-PDEG</label><input id="base" class="ltr" inputmode="url" placeholder="${onGateway() ? 'ריק = ה-PDEG שממנו נפתחה האפליקציה' : 'http://192.168.1.200'}" value="${esc(cfg.base)}"></div>
+      ${HAS_TCP ? `<div class="field"><label>שיטת שליטה</label>
+        <div class="themeseg" id="ctrlSeg">
+          <button data-ctrl="http" aria-pressed="${cfg.ctrl!=='dynet'}">HTTP (שרת ווב)</button>
+          <button data-ctrl="dynet" aria-pressed="${cfg.ctrl==='dynet'}">DyNet (TCP 95)</button>
+        </div>
+        <div class="note">DyNet שולח ישירות על הבאס, בלי תלות בשרת-הווב של ה-PDEG. פריסטים עדיין נשלחים ב-HTTP בשלב זה.</div></div>` : ''}
       ${info ? `<div class="kv mono"><span>IP</span><span>${esc(info.id.IPv4Addr||'')}</span><span>Box</span><span>${esc(info.id.BoxNumber)}</span><span>FW</span><span>${esc(info.id.FirmwareVersion||'')}</span>${info.bus?`<span>אפיק DyNet</span><span>${esc(info.bus.Voltage)}V · ${esc(info.bus.VoltageState||'')}</span>`:''}</div>` : ''}
       ${!onGateway() && !NATIVE && cfg.mode==='pdeg' ? `<div class="note">ה-PDEG לא מאשר פניות מאתרים אחרים, לכן האפליקציה צריכה להיפתח מה-PDEG עצמו (http://192.168.1.200/dynet.htm).</div>` : ''}
       <div class="actions"><button class="btn primary" id="connBtn">${isUp()?'בדוק חיבור שוב':'התחבר'}</button></div>
@@ -2327,6 +2359,7 @@ function renderSetup(m){
     const tok = $('#dbxTok').value.trim(); if(!tok){ toast('הדבק טוקן'); return; }
     store.set('dbx', { access:tok, exp:Date.now()+3.5*3600*1000, manual:true }); toast('הטוקן נשמר. נסה לפתוח מ-Dropbox.'); renderSetup(m);
   });
+  m.querySelectorAll('#ctrlSeg button').forEach(b => b.addEventListener('click', () => { cfg.ctrl=b.dataset.ctrl; saveCfg(); m.querySelectorAll('#ctrlSeg button').forEach(x=>x.setAttribute('aria-pressed', x===b)); toast(cfg.ctrl==='dynet' ? 'שליטה דרך DyNet (TCP 95)' : 'שליטה דרך HTTP'); }));
   $('#connBtn').addEventListener('click', connect);
   $('#saveCur') && $('#saveCur').addEventListener('click', () => saveProject());
   $('#saveAsBtn') && $('#saveAsBtn').addEventListener('click', () => { const r=$('#saveAsRow'); if(r){ r.hidden=!r.hidden; if(!r.hidden) $('#saveAsName').focus(); } });
