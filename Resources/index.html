@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1226";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1240";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1087,8 +1087,8 @@ const onGateway = () => location.protocol==='http:' && /^(\d+\.){3}\d+$|\.local$
 
 /* ───────── settings ───────── */
 const DBX_APP_KEY = '0lg7wbsl4j5px1t';   // the project's Dropbox app key — always restored if it goes missing
-const cfg = Object.assign({ mode: (onGateway() || NATIVE) ? 'pdeg' : 'sim', base: NATIVE ? 'http://192.168.1.200' : '', fade:2, dbxKey:'', tcpPort:95, ctrl:'http' }, store.get('cfg', {}));
-if(NATIVE && !cfg.base) cfg.base = 'http://192.168.1.200';
+const cfg = Object.assign({ mode: (onGateway() || NATIVE) ? 'pdeg' : 'sim', base: NATIVE ? '192.168.1.200' : '', fade:2, dbxKey:'', tcpPort:95, ctrl:'http' }, store.get('cfg', {}));
+if(NATIVE && !cfg.base) cfg.base = '192.168.1.200';
 if(!cfg.tcpPort) cfg.tcpPort = 95;
 delete cfg.physAreas;
 const saveCfg = () => store.set('cfg', cfg);
@@ -1134,7 +1134,8 @@ function setOut(duid, ch, pct){
   document.querySelectorAll(`[data-physsl="${key}"]`).forEach(sl => { if(sl.dataset.drag!=='1') sl.value = pct; });
   document.querySelectorAll(`[data-physval="${key}"]`).forEach(v => v.textContent = pct+'%');
 }
-const tcpHost = () => { try{ return new URL(cfg.base || 'http://192.168.1.200').hostname; }catch(e){ return '192.168.1.200'; } };
+// Host for the DyNet TCP link — accepts a bare IP ("192.168.8.200") or a full URL.
+const tcpHost = () => { let b=(cfg.base||'').trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'').split(':')[0]; return b || '192.168.1.200'; };
 const physArea = dcode => [0x60,0x65,0x49].includes(dcode);
 const isDimmable = dcode => dcode===0x65 || dcode===0x49;
 /* ───────── DyNet1 frames (raw TCP to the PDEG) ───────── */
@@ -1275,7 +1276,7 @@ function setProject(p, buf){
   // Auto-target the gateway IP stored in the project (if any), so each project
   // connects to its own PDEG without the user retyping the address.
   if(p.conn && p.conn.ip){
-    cfg.base = 'http://' + p.conn.ip;
+    cfg.base = p.conn.ip;
     if(p.conn.port) cfg.tcpPort = p.conn.port;
     saveCfg();
     setTimeout(() => toast('כתובת ה-EG מהפרויקט: '+p.conn.ip+':'+(p.conn.port||95)+'. אפשר לשנות בהגדרות.', 6000), 700);
@@ -1299,7 +1300,7 @@ function logPush(dir, text, detail){
   const l = { dir, text, detail, t:new Date() }; logLines.push(l); if(logLines.length>400) logLines.shift();
   if(route.tab==='log' && route.area==null) appendLog(l);
 }
-function gwUrl(path){ return (cfg.base||'').replace(/\/+$/,'') + path; }
+function gwUrl(path){ let b=(cfg.base||'').trim(); if(b && !/^https?:\/\//.test(b)) b='http://'+b; return b.replace(/\/+$/,'') + path; }
 // One request at a time, like the PDEG's own UI: the gateway answers slowly when flooded.
 function gwFetch(path, opts={}){
   const run = async () => {
@@ -2347,7 +2348,7 @@ function renderSetup(m){
         <label><input type="radio" name="mode" value="sim" ${cfg.mode==='sim'?'checked':''}><span><b>סימולציה</b><small>PDEG מדומה, לבדיקת הממשק בלי אתר.</small></span></label>
       </div>
       ${CAN_PHYS ? `<div class="grid2"><div class="field"><label>${HAS_TCP?'חיבור TCP לשליטה ביציאות':'שליטה ביציאות'}</label><div class="note" id="tcpState">${HAS_TCP ? ({ on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[tcp.state]) : 'דרך פורט ה-DyNet של ה-PDEG'}</div></div><div class="field"><label for="tcpPort">פורט DyNet</label><input id="tcpPort" class="ltr" inputmode="numeric" value="${esc(cfg.tcpPort)}"></div></div>` : ''}
-      <div class="field" id="baseField"><label for="base">כתובת ה-PDEG</label><input id="base" class="ltr" inputmode="url" placeholder="${onGateway() ? 'ריק = ה-PDEG שממנו נפתחה האפליקציה' : 'http://192.168.1.200'}" value="${esc(cfg.base)}"></div>
+      <div class="field" id="baseField"><label for="base">כתובת ה-EG${cfg.ctrl==='dynet'?' · TCP '+esc(cfg.tcpPort):''}</label><input id="base" class="ltr" inputmode="decimal" placeholder="${onGateway() ? 'ריק = ה-EG שממנו נפתחה האפליקציה' : '192.168.8.200'}" value="${esc((cfg.base||'').replace(/^https?:\/\//,''))}"></div>
       ${HAS_TCP ? `<div class="field"><label>שיטת שליטה</label>
         <div class="themeseg" id="ctrlSeg">
           <button data-ctrl="http" aria-pressed="${cfg.ctrl!=='dynet'}">HTTP (שרת ווב)</button>
@@ -2382,7 +2383,7 @@ function renderSetup(m){
   const sync = () => { $('#baseField').hidden = m.querySelector('input[name=mode]:checked').value!=='pdeg'; };
   m.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cfg.mode=r.value; saveCfg(); sync(); setLink('off','מנותק'); }));
   sync();
-  $('#base').addEventListener('change', e => { let v=e.target.value.trim(); if(v && !/^https?:\/\//.test(v)) v='http://'+v; cfg.base=v; e.target.value=v; saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); });
+  $('#base').addEventListener('change', e => { let v=e.target.value.trim().replace(/^https?:\/\//,'').replace(/\/+$/,''); cfg.base=v; e.target.value=v; saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); });
   $('#dbxKey') && $('#dbxKey').addEventListener('change', e => { cfg.dbxKey=e.target.value.trim(); saveCfg(); });
   $('#dbxTokOk') && $('#dbxTokOk').addEventListener('click', () => {
     const tok = $('#dbxTok').value.trim(); if(!tok){ toast('הדבק טוקן'); return; }
