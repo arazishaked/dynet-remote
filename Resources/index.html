@@ -983,7 +983,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-0743";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-0900";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1191,6 +1191,7 @@ function FrameReader(onFrame){
 
 function setProject(p, buf){
   P = p; origDlj = buf || null;
+  openFolders.clear(); openDevs.clear();   // new project opens fully collapsed
   for(const k in live) delete live[k];
   P.edits = P.edits || {};
   P.reassign = P.reassign || {};
@@ -1377,7 +1378,7 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden && lin
 /* ───────── routing + render ───────── */
 let route = { tab:'areas', area:null };
 let dbxAwaitingCode = false;
-const openFolders = new Set(store.get('openFolders', []));
+const openFolders = new Set();   // always start collapsed on app open (not persisted)
 const openDevs = new Set();
 function go(r){ if(r.tab!=='setup') dbxAwaitingCode = false; route = Object.assign({ area:null }, r); render(); window.scrollTo(0,0); }
 
@@ -1426,7 +1427,7 @@ function areaRow(a){
     <span class="state" data-live-preset="${a.id}" ${L&&L.preset?'':'hidden'}>P${L&&L.preset||''}</span></button>`;
 }
 const chev = '<svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6"/></svg>';
-function bindFolders(root){ root.querySelectorAll('details.group').forEach(d => d.addEventListener('toggle', () => { if(d.open) openFolders.add(d.dataset.k); else openFolders.delete(d.dataset.k); store.set('openFolders',[...openFolders]); if(d.open && d.dataset.k.startsWith('dev/')) pollDevicesIn(d); })); }
+function bindFolders(root){ root.querySelectorAll('details.group').forEach(d => d.addEventListener('toggle', () => { if(d.open) openFolders.add(d.dataset.k); else openFolders.delete(d.dataset.k); if(d.open && d.dataset.k.startsWith('dev/')) pollDevicesIn(d); })); }
 function drawTree(){
   const q = (route.q||'').trim(), box = $('#tree');
   if(q){
@@ -1474,7 +1475,6 @@ function renderArea(m, a){
   const presets = [1,2,3,4,5,6,7,8].map(p => `<button class="pbtn" data-preset="${p}" aria-pressed="false"><span class="pn">P${p}</span><span class="pl">${esc(presetName(a,p))||'&nbsp;'}</span></button>`).join('');
   const fades = [0,0.5,2,5,10];
   const chs = a.channels.map(ch => {
-    const phys = ch.phys.slice(0,6).map(([d,n]) => `<span class="chip"><b>${esc(devLabel(P.devices[d]))}</b> · יציאה ${n+1}</span>`).join('') + (ch.phys.length>6 ? `<span class="chip">+${ch.phys.length-6}</span>` : '');
     const ctrl = isSwitch(ch)
       ? `<button class="toggle" role="switch" aria-checked="false" data-sw="${ch.id}" aria-label="${esc(chName(ch))}"></button>`
       : `<input type="range" min="0" max="100" step="1" value="0" data-sl="${ch.id}" aria-label="${esc(chName(ch))}"><button class="toggle" role="switch" aria-checked="false" data-sw="${ch.id}" aria-label="הדלק/כבה ${esc(chName(ch))}"></button>`;
@@ -1488,7 +1488,6 @@ function renderArea(m, a){
         <span class="lvl" data-lvl="${ch.id}">—</span></div>
       ${ch.desc ? `<div class="desc">${esc(ch.desc)}</div>` : ''}
       <div class="ctrl">${ctrl}</div>
-      ${phys ? `<div class="chips">${phys}</div>` : ''}
     </div>`;
   }).join('');
   const panels = a.devices.map(d=>P.devices[d]).filter(Boolean);
@@ -1955,10 +1954,13 @@ function devMatches(dv, q){
 function renderDevices(m){
   const q = (route.devq||'').trim().toLowerCase();
   const counts = {}; P.deviceOrder.forEach(d => { const k=P.devices[d].kind; counts[k]=(counts[k]||0)+1; });
-  const byLoc = {};
-  P.deviceOrder.forEach(d => { const dv=P.devices[d]; if(!devMatches(dv, q)) return; const l=dv.location||'ללא מיקום'; (byLoc[l]=byLoc[l]||[]).push(dv); });
+  const byLoc = {}, panelByLoc = {};
+  P.deviceOrder.forEach(d => { const dv=P.devices[d]; if(!devMatches(dv, q)) return; const l=dv.location||'ללא מיקום';
+    if(dv.kind==='panel') (panelByLoc[l]=panelByLoc[l]||[]).push(dv);
+    else (byLoc[l]=byLoc[l]||[]).push(dv); });
   const nat = (x,y) => x.localeCompare(y, 'he', { numeric:true });
-  const locs = Object.keys(byLoc).sort((x,y) => { const lx=byLoc[x].some(d=>d.kind!=='panel'), ly=byLoc[y].some(d=>d.kind!=='panel'); return lx===ly ? nat(x,y) : (lx?-1:1); });
+  const locs = Object.keys(byLoc).sort(nat);
+  const panelLocs = Object.keys(panelByLoc).sort(nat);
   const devHtml = dv => {
     const map = P.physMap[dv.duid] || {}, rows = [];
     for(let n=0;n<dv.channels;n++){
@@ -2015,7 +2017,13 @@ function renderDevices(m){
     ${locs.map(loc => {
       const list = byLoc[loc].slice().sort((x,y)=> (KORDER[x.kind]-KORDER[y.kind]) || nat(x.name,y.name)), k='dev/'+loc;
       return `<details class="group" data-k="${esc(k)}" ${(q || openFolders.has(k))?'open':''}><summary>${chev}${esc(loc)}<span class="count">${list.length}</span></summary><div class="rows">${list.map(devHtml).join('')}</div></details>`;
-    }).join('') || (q ? '<div class="empty">לא נמצאו בקרים עבור „'+esc(route.devq)+'”.</div>' : '')}`;
+    }).join('')}
+    ${panelLocs.length ? (()=>{ const pk='dev/@switches', total=panelLocs.reduce((s,l)=>s+panelByLoc[l].length,0);
+      return `<details class="group" data-k="${esc(pk)}" ${(q || openFolders.has(pk))?'open':''}><summary>${chev}מפסקים<span class="count">${total}</span></summary>
+        ${panelLocs.map(loc => { const list = panelByLoc[loc].slice().sort((x,y)=>nat(x.name,y.name)), k='dev/@switches/'+loc;
+          return `<details class="group" data-k="${esc(k)}" ${(q || openFolders.has(k))?'open':''}><summary>${chev}${esc(loc)}<span class="count">${list.length}</span></summary><div class="rows">${list.map(devHtml).join('')}</div></details>`; }).join('')}
+      </details>`; })() : ''}
+    ${(!locs.length && !panelLocs.length && q) ? '<div class="empty">לא נמצאו בקרים עבור „'+esc(route.devq)+'”.</div>' : ''}`;
   const dq = $('#dq'); if(dq) dq.addEventListener('input', () => { route.devq = dq.value; renderDevices(m); const f=$('#dq'); if(f){ f.focus(); const v=f.value; f.value=''; f.value=v; } });
   bindFolders(m);
   m.querySelectorAll('details.dev').forEach(d => d.addEventListener('toggle', () => { if(d.open){ openDevs.add(d.dataset.duid); pollDevice(d.dataset.duid); } else openDevs.delete(d.dataset.duid); }));
