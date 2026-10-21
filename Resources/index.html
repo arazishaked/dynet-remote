@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1213";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1226";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1324,10 +1324,25 @@ function gwFetch(path, opts={}){
 const num = t => { const m = /=\s*(-?\d+)/.exec(t) || /(-?\d+)\s*$/.exec(t); return m ? +m[1] : NaN; };
 // Control transport: 'http' = PDEG web API; 'dynet' = raw DyNet over TCP 95 (independent of the web server).
 const useDynet = () => cfg.ctrl==='dynet' && HAS_TCP && cfg.mode==='pdeg';
-// DyNet1 logical "fade channel area to level" (0x1C/0x71) — understood by DyNet1 and DyNet2 controllers alike.
+// Which DyNet dialect this site speaks — detected from live bus traffic ('dynet1' | 'dynet2' | null=unknown).
+let busProto = null;
+function noteBusProto(fr){
+  let p = null;
+  if(fr[0]===0xAC && fr[6]===0x00) p = 'dynet2';        // DyNet2 logical area message
+  else if(fr[0]===0x1C) p = 'dynet1';                   // DyNet1 logical message
+  if(p && p!==busProto){ busProto = p; const el=$('#protoTag'); if(el) el.textContent = 'זוהה: '+(p==='dynet2'?'DyNet2':'DyNet1'); }
+}
+// DyNet1 logical "fade channel area to level" (0x1C/0x71) — for pure-DyNet1 controllers.
 function dynetAreaLevel(area, ch /*0-based or 0xFF*/, pct){
   const lvl = 255 - Math.round(Math.max(0,Math.min(100,pct))*2.54);
   return DyNet.frame([0x1C, area&0xff, ch&0xff, 0x71, lvl, 0, 0]);
+}
+// DyNet2 "fade channel area to level" (op 0x10) — the exact command this system uses (byte-for-byte from the bus capture).
+function dynet2AreaLevel(area, ch /*1-based*/, pct, fadeMs){
+  const level = Math.round(Math.max(0,Math.min(100,pct))*2.54);
+  const f = Math.max(0, Math.round(fadeMs||0));
+  const payload = [0x02, 0x00, ch&0xff, level&0xff, 0x00, 0x00, (f>>8)&0xff, f&0xff, 0x00];
+  return DyNet2.frame(0x10, 0xDC, 0x003D, 0x00, ((area&0xff)<<8)|0xFF, payload);
 }
 const GW = {
   async preset(a, p, fade){
@@ -1337,20 +1352,33 @@ const GW = {
     setLive(a, { preset:p });
   },
   async level(a, c, pct, fade){
-    if(useDynet()){ await this.levelDynet(a, c, pct); setLive(a, { level:[c,pct] }); return; }
+    if(useDynet()){ await this.levelDynet(a, c, pct, fade); setLive(a, { level:[c,pct] }); return; }
     await gwFetch(`/SetDyNet.cgi?a=${a}&c=${c}&l=${pct}&f=${fade}&j=255`);
     logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a, c)} → ${pct}%`);
     setLive(a, { level:[c,pct] });
   },
-  /* Set an area/channel over DyNet: one DyNet1 logical "fade channel area to level" message.
-     The controllers resolve it to their outputs — efficient (one frame) and DyNet1/DyNet2 compatible. */
-  async levelDynet(a, c, pct){
-    await this.sendFrame(dynetAreaLevel(a, c===0?0xFF:(c-1), pct), `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a,c)} → ${pct}%`);
+  /* Set an area/channel over DyNet, in the dialect auto-detected from the bus.
+     DyNet1 → one 0x1C message; DyNet2 (or unknown) → op 0x10 per channel, plus a DyNet1
+     fallback only while the dialect is still unknown. c===0 = every channel in the area. */
+  async levelDynet(a, c, pct, fade){
+    if(busProto==='dynet1'){
+      const fr = dynetAreaLevel(a, c===0?0xFF:(c-1), pct);
+      await this.sendRaw(fr);
+      logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a,c)} → ${pct}%`, Array.from(fr, hex2).join(' '));
+      return;
+    }
+    const fadeMs = Math.round((fade||0)*1000);
+    const chans = c===0 ? ((P.areas[a]&&P.areas[a].channels.map(x=>x.id))||[]) : [c];
+    for(const ch of chans){
+      const fr = dynet2AreaLevel(a, ch, pct, fadeMs);
+      await this.sendRaw(fr);
+      logPush('tx', `${areaLabel(a)} · ${chLabel(a, ch)} → ${pct}%`, Array.from(fr, hex2).join(' '));
+    }
+    if(!busProto) await this.sendRaw(dynetAreaLevel(a, c===0?0xFF:(c-1), pct));   // dialect unknown → also send DyNet1
   },
-  async sendFrame(fr, logText){
+  async sendRaw(fr){
     const r = await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(fr) });
     if(!r || r.error){ logPush('err', 'שליחת DyNet נכשלה: '+((r&&r.error)||''), tcpHost()+':'+cfg.tcpPort); throw new Error('אין חיבור TCP ל-PDEG ('+tcpHost()+':'+cfg.tcpPort+').'); }
-    logPush('tx', logText, Array.from(fr, hex2).join(' '));
   },
   /* Single output on one controller: physical DyNet message straight to the PDEG over TCP */
   async physical(dv, ch, pct){
@@ -1470,6 +1498,7 @@ async function connect(){
 /* Live DyNet traffic from the PDEG: wall switches, other apps, System Builder */
 const tcp = { running:false, state:'off' };
 const rxFrame = FrameReader(fr => {
+  noteBusProto(fr);                                  // learn DyNet1 vs DyNet2 from live traffic
   const d = DyNet.decode(fr);
   if(d.skip) return;                                 // PDEG housekeeping — don't clutter the log
   logPush('rx', d.text, d.hex);
@@ -2324,7 +2353,7 @@ function renderSetup(m){
           <button data-ctrl="http" aria-pressed="${cfg.ctrl!=='dynet'}">HTTP (שרת ווב)</button>
           <button data-ctrl="dynet" aria-pressed="${cfg.ctrl==='dynet'}">DyNet (TCP 95)</button>
         </div>
-        <div class="note">DyNet שולח ישירות על הבאס, בלי תלות בשרת-הווב של ה-PDEG. פריסטים עדיין נשלחים ב-HTTP בשלב זה.</div></div>` : ''}
+        <div class="note">DyNet שולח ישירות על הבאס, בלי תלות בשרת-הווב של ה-PDEG. האפליקציה מזהה לבד אם המערכת DyNet1 או DyNet2. <b id="protoTag">${busProto?('זוהה: '+(busProto==='dynet2'?'DyNet2':'DyNet1')):'מזהה…'}</b>. פריסטים עדיין ב-HTTP בשלב זה.</div></div>` : ''}
       ${info ? `<div class="kv mono"><span>IP</span><span>${esc(info.id.IPv4Addr||'')}</span><span>Box</span><span>${esc(info.id.BoxNumber)}</span><span>FW</span><span>${esc(info.id.FirmwareVersion||'')}</span>${info.bus?`<span>אפיק DyNet</span><span>${esc(info.bus.Voltage)}V · ${esc(info.bus.VoltageState||'')}</span>`:''}</div>` : ''}
       ${!onGateway() && !NATIVE && cfg.mode==='pdeg' ? `<div class="note">ה-PDEG לא מאשר פניות מאתרים אחרים, לכן האפליקציה צריכה להיפתח מה-PDEG עצמו (http://192.168.1.200/dynet.htm).</div>` : ''}
       <div class="actions"><button class="btn primary" id="connBtn">${isUp()?'בדוק חיבור שוב':'התחבר'}</button></div>
