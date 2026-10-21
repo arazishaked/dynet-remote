@@ -135,10 +135,19 @@ nav.tabs button[aria-current="page"] svg{color:var(--accent-text)}
 .ring .cap{position:absolute;inset:0;rotate:calc(var(--p,0)*3.6deg)}
 .ring .cap .cdot{position:absolute;top:3px;left:50%;translate:-50%;width:15px;height:15px;border-radius:50%;background:#fff3dd;box-shadow:0 0 16px 3px var(--glow-strong),0 0 0 4px var(--bg)}
 .ring[style*="--p:0"] .cap,.ring[data-off] .cap{display:none}
-.ring .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring{touch-action:none;cursor:grab;-webkit-user-select:none;user-select:none}
+.ring:active{cursor:grabbing}
+.ring .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 34px}
+.ring .rk{font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--accent-text);margin-bottom:3px;min-height:14px}
 .ring .rv{font-size:52px;font-weight:300;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .ring .rv span{font-size:22px;color:var(--muted);font-weight:400}
-.ring .rl{font-size:12px;color:var(--muted);margin-top:7px}
+.ring .rl{font-size:12px;color:var(--muted);margin-top:7px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rhint{font-size:11.5px;color:var(--muted);margin-top:9px}
+.ch{cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.ch[data-sel]{border-color:var(--accent-border);box-shadow:0 0 0 1px var(--accent-border),0 14px 30px -16px var(--glow)}
+.ch .selbadge{position:absolute;top:13px;inset-inline-start:15px;font-size:10px;font-weight:700;color:var(--on-accent);background:var(--accent-grad);border-radius:7px;padding:2px 8px;display:none;z-index:1}
+.ch[data-sel] .selbadge{display:block}
+.ch[data-sel] .cic{visibility:hidden}
 .mpow{margin-top:18px;display:flex;gap:10px}
 .mpb{padding:10px 20px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}
 .mpb svg{width:15px;height:15px}
@@ -430,9 +439,22 @@ var DLJ = (function () {
     var tree = rf ? walk(rf, []) : { type: 'folder', name: 'Root', children: [] };
 
     var name = (fileName || 'פרויקט').replace(/\.dlj$/i, '').replace(/^[0-9a-f]{8}-/i, '');
+
+    // Connection settings stored in the job: the gateway's configured IP + DyNet port.
+    // Lets the app auto-target the right PDEG when a project is opened.
+    var conn = null;
+    try {
+      var tcps = doc.getElementsByTagName ? doc.getElementsByTagName('TCPConnection') : [];
+      for (var ti = 0; ti < tcps.length; ti++) {
+        var ip = (attr(tcps[ti], 'ip_address') || '').trim();
+        if (ip) { conn = { ip: ip, port: (+attr(tcps[ti], 'port') || 95) }; break; }
+      }
+    } catch (e) {}
+
     return {
       name: name, fileName: fileName || '', version: attr(root, 'version'), builder: attr(root, 'EPversion'),
-      loadedAt: Date.now(), tree: tree, areas: areas, devices: devices, deviceOrder: order, physMap: physMap
+      loadedAt: Date.now(), tree: tree, areas: areas, devices: devices, deviceOrder: order, physMap: physMap,
+      conn: conn
     };
   }
 
@@ -983,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-0900";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-0952";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1064,11 +1086,15 @@ function confirmModal(msg, yes='כן', no='לא'){
 const onGateway = () => location.protocol==='http:' && /^(\d+\.){3}\d+$|\.local$/.test(location.hostname);
 
 /* ───────── settings ───────── */
+const DBX_APP_KEY = '0lg7wbsl4j5px1t';   // the project's Dropbox app key — always restored if it goes missing
 const cfg = Object.assign({ mode: (onGateway() || NATIVE) ? 'pdeg' : 'sim', base: NATIVE ? 'http://192.168.1.200' : '', fade:2, dbxKey:'', tcpPort:95 }, store.get('cfg', {}));
 if(NATIVE && !cfg.base) cfg.base = 'http://192.168.1.200';
 if(!cfg.tcpPort) cfg.tcpPort = 95;
 delete cfg.physAreas;
 const saveCfg = () => store.set('cfg', cfg);
+/* Self-healing Dropbox key: if it's ever empty, put the built-in one back. Call before any Dropbox op. */
+function ensureDbxKey(){ if(!cfg.dbxKey){ cfg.dbxKey = DBX_APP_KEY; saveCfg(); } return cfg.dbxKey; }
+ensureDbxKey();
 
 /* ───────── theme (Warm Glow dark default / warm day) ───────── */
 const curTheme = () => store.get('theme', 'dark');
@@ -1192,6 +1218,14 @@ function FrameReader(onFrame){
 function setProject(p, buf){
   P = p; origDlj = buf || null;
   openFolders.clear(); openDevs.clear();   // new project opens fully collapsed
+  // Auto-target the gateway IP stored in the project (if any), so each project
+  // connects to its own PDEG without the user retyping the address.
+  if(p.conn && p.conn.ip){
+    cfg.base = 'http://' + p.conn.ip;
+    if(p.conn.port) cfg.tcpPort = p.conn.port;
+    saveCfg();
+    setTimeout(() => toast('כתובת ה-EG מהפרויקט: '+p.conn.ip+':'+(p.conn.port||95)+'. אפשר לשנות בהגדרות.', 6000), 700);
+  }
   for(const k in live) delete live[k];
   P.edits = P.edits || {};
   P.reassign = P.reassign || {};
@@ -1327,6 +1361,27 @@ const Sim = {
 
 async function connect(){
   setLink('wait','מתחבר…');
+  link.info = null;
+  // Native app, live mode: the real link is the TCP DyNet port (the same channel
+  // System Builder uses). The HTTP web API is optional and must NOT gate the link —
+  // so the app connects to ANY IP the user types, as long as port 95 is reachable.
+  if(HAS_TCP && cfg.mode==='pdeg'){
+    const o = await native({ kind:'tcpOpen', host:tcpHost(), port:cfg.tcpPort });
+    if(o && !o.error){
+      setLink('on','מחובר');
+      logPush('rx', `מחובר ל-PDEG · TCP ${tcpHost()}:${cfg.tcpPort}`);
+      // Opportunistic: pull FW / bus info over HTTP if the PDEG serves it (never fails the link).
+      GW.ident().then(id => GW.bus().catch(()=>null).then(bus => { link.info = { id, bus }; if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); })).catch(()=>{});
+      GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
+      if(route.area!=null) requestArea(P.areas[route.area], true);
+      tcpListen();
+    } else {
+      setLink('err','אין קשר'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort);
+    }
+    if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main'));
+    return;
+  }
+  // Simulation, or a browser served from the PDEG / a-Shell: probe via the HTTP web API.
   try{
     const id = await GW.ident();
     const bus = await GW.bus().catch(()=>null);
@@ -1337,7 +1392,6 @@ async function connect(){
     if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main'));
     if(route.area!=null) requestArea(P.areas[route.area], true);
   }catch(e){ setLink('err','אין קשר'); if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); }
-  if(HAS_TCP && cfg.mode==='pdeg') tcpListen();
 }
 /* Live DyNet traffic from the PDEG: wall switches, other apps, System Builder */
 const tcp = { running:false, state:'off' };
@@ -1377,6 +1431,7 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden && lin
 
 /* ───────── routing + render ───────── */
 let route = { tab:'areas', area:null };
+let areaScope = 'all';   // ring target in the area view: 'all' or a channel id
 let dbxAwaitingCode = false;
 const openFolders = new Set();   // always start collapsed on app open (not persisted)
 const openDevs = new Set();
@@ -1452,26 +1507,57 @@ function drawTree(){
 const BULB_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg>';
 const POWER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.5 7a7.5 7.5 0 1 0 11 0"/></svg>';
 const chIcon = ch => isSwitch(ch) ? POWER_SVG : BULB_SVG;
-/* live master % for the current area's hero ring, from channel UI state */
+/* ── hero ring, with "focus mode": the ring drives either the whole area ('all')
+      or one channel (areaScope = channel id) ── */
+const curArea = () => route.area!=null ? P.areas[route.area] : null;
+const scopeChannels = a => areaScope==='all' ? a.channels : a.channels.filter(c=>c.id===areaScope);
+function slVal(id){ const sl=document.querySelector('[data-sl="'+id+'"]'); if(sl) return +sl.value;
+  const sw=document.querySelector('[data-sw="'+id+'"]'); return sw && sw.getAttribute('aria-checked')==='true' ? 100 : 0; }
+function scopeVal(a){
+  if(areaScope!=='all'){ const c=a.channels.find(x=>x.id===areaScope); return c ? slVal(c.id) : 0; }
+  let sum=0,n=0; a.channels.forEach(c=>{ sum+=slVal(c.id); n++; }); return n?Math.round(sum/n):0;
+}
+const areaAnyOn = a => a.channels.some(c=>slVal(c.id)>0);
 function syncMaster(){
-  const ring = $('#ring'); if(!ring) return;
-  const sls = document.querySelectorAll('.ch [data-sl]');
-  const sws = document.querySelectorAll('.ch [data-sw]');
-  let sum=0, n=0, anyOn=false;
-  sls.forEach(s => { const v=+s.value; sum+=v; n++; if(v>0) anyOn=true; });
-  sws.forEach(sw => { if(document.querySelector('.ch [data-sl][data-sl="'+sw.dataset.sw+'"]')) return; const on=sw.getAttribute('aria-checked')==='true'; sum+=on?100:0; n++; if(on) anyOn=true; });
-  const p = n ? Math.round(sum/n) : 0;
-  ring.style.setProperty('--p', p);
-  if(anyOn && p>0) ring.removeAttribute('data-off'); else ring.setAttribute('data-off','');
-  const rv=$('#ringV'); if(rv) rv.innerHTML = p+'<span>%</span>';
+  const ring=$('#ring'); if(!ring) return; const a=curArea(); if(!a || !a.channels.length) return;
+  const p = scopeVal(a);
+  if(!ring.dataset.drag){ ring.style.setProperty('--p', p); if(p>0) ring.removeAttribute('data-off'); else ring.setAttribute('data-off',''); const rv=$('#ringV'); if(rv) rv.innerHTML = p+'<span>%</span>'; }
+  const rk=$('#ringK'), rl=$('#ringL');
+  if(areaScope==='all'){ if(rk) rk.textContent='כל האזור'; if(rl) rl.textContent='בהירות כל הערוצים'; }
+  else { const c=a.channels.find(x=>x.id===areaScope); if(rk) rk.textContent='ערוץ '+areaScope; if(rl) rl.textContent = c?chName(c):''; }
+  const anyOn = areaAnyOn(a);
   const on100=$('#pwOn'), off0=$('#pwOff');
   if(on100) on100.classList.toggle('on', anyOn);
   if(off0) off0.classList.toggle('on', !anyOn);
+  document.querySelectorAll('.ch').forEach(el=>{ if(areaScope!=='all' && +el.dataset.ch===areaScope) el.setAttribute('data-sel',''); else el.removeAttribute('data-sel'); });
 }
+/* paint the UI for a ring drag (no gateway send until the drag ends) */
+function scopeApplyUI(a,p){
+  p=Math.max(0,Math.min(100,Math.round(p)));
+  const ring=$('#ring'); if(ring){ ring.style.setProperty('--p',p); if(p>0) ring.removeAttribute('data-off'); else ring.setAttribute('data-off',''); const rv=$('#ringV'); if(rv) rv.innerHTML=p+'<span>%</span>'; }
+  scopeChannels(a).forEach(c=>{
+    const sl=document.querySelector('[data-sl="'+c.id+'"]'), sw=document.querySelector('[data-sw="'+c.id+'"]'), lv=$('[data-lvl="'+c.id+'"]');
+    if(sl) sl.value=p;
+    if(sw) sw.setAttribute('aria-checked', p>0);
+    if(lv) lv.textContent=(sl?p:(p>0?100:0))+'%';
+    paintCh(c.id, sl?p:(p>0?100:0));
+  });
+  const anyOn=areaAnyOn(a); const on100=$('#pwOn'), off0=$('#pwOff');
+  if(on100) on100.classList.toggle('on', anyOn); if(off0) off0.classList.toggle('on', !anyOn);
+}
+/* send the ring's value to the gateway for the current scope */
+function scopeSend(a,p){
+  p=Math.max(0,Math.min(100,Math.round(p)));
+  if(areaScope==='all'){ act(GW.level(a.id, 0, p, cfg.fade)); }
+  else { const c=a.channels.find(x=>x.id===areaScope); if(!c) return; act(GW.level(a.id, c.id, isSwitch(c)?(p>0?100:0):p, cfg.fade)); }
+}
+/* tap a channel to focus the ring on it; tap again (or its selected state) returns to the whole area */
+function setScope(a, s){ areaScope = (areaScope===s) ? 'all' : s; syncMaster(); }
 function renderArea(m, a){
   if(!a){ go({tab:'areas'}); return; }
   $('#hTitle').textContent = areaName(a);
   $('#hSub').textContent = `אזור ${a.id}` + (a.path.length ? ' · '+a.path.join(' › ') : '');
+  areaScope = 'all';   // ring starts controlling the whole area
   const presets = [1,2,3,4,5,6,7,8].map(p => `<button class="pbtn" data-preset="${p}" aria-pressed="false"><span class="pn">P${p}</span><span class="pl">${esc(presetName(a,p))||'&nbsp;'}</span></button>`).join('');
   const fades = [0,0.5,2,5,10];
   const chs = a.channels.map(ch => {
@@ -1480,6 +1566,7 @@ function renderArea(m, a){
       : `<input type="range" min="0" max="100" step="1" value="0" data-sl="${ch.id}" aria-label="${esc(chName(ch))}"><button class="toggle" role="switch" aria-checked="false" data-sw="${ch.id}" aria-label="הדלק/כבה ${esc(chName(ch))}"></button>`;
     const edited = P.edits[a.id+':'+ch.id]!=null;
     return `<div class="ch" data-ch="${ch.id}" data-off>
+      <span class="selbadge">נשלט בטבעת</span>
       <div class="cwash" data-wash="${ch.id}"></div>
       <div class="hd"><span class="cic">${chIcon(ch)}</span>
         <span class="lamp" data-lamp="${ch.id}"></span>
@@ -1496,8 +1583,9 @@ function renderArea(m, a){
       <div class="ring" id="ring" style="--p:0" data-off>
         <div class="amb"></div><div class="tk"></div><div class="arc"></div>
         <div class="cap"><div class="cdot"></div></div>
-        <div class="ctr"><div class="rv" id="ringV">0<span>%</span></div><div class="rl">בהירות האזור</div></div>
+        <div class="ctr"><div class="rk" id="ringK">כל האזור</div><div class="rv" id="ringV">0<span>%</span></div><div class="rl" id="ringL">בהירות כל הערוצים</div></div>
       </div>
+      <div class="rhint">↕ גרור את הטבעת · לחץ על ערוץ כדי לשלוט רק עליו</div>
       <div class="mpow">
         <button class="mpb" id="pwOn" data-all="100"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.5 7a7.5 7.5 0 1 0 11 0"/></svg>הכל דלוק</button>
         <button class="mpb on" id="pwOff" data-all="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18.4 5.6 5.6 18.4"/><circle cx="12" cy="12" r="9"/></svg>כבה הכל</button>
@@ -1531,6 +1619,21 @@ function renderArea(m, a){
   }));
   m.querySelectorAll('[data-all]').forEach(b => b.addEventListener('click', () => act(GW.level(a.id, 0, +b.dataset.all, cfg.fade))));
   m.querySelectorAll('[data-rename]').forEach(b => b.addEventListener('click', () => startRename(a, +b.dataset.rename)));
+  // tap a channel card to focus the ring on it (ignore taps on its controls)
+  m.querySelectorAll('.ch').forEach(el => el.addEventListener('click', e => {
+    if(e.target.closest('input,button,.toggle,.icon,.rename')) return;
+    setScope(a, +el.dataset.ch);
+  }));
+  // drag the hero ring (vertical) to set the current scope; send to the gateway on release
+  const ring = $('#ring');
+  if(ring){
+    let active=false, startY=0, startV=0, lastP=0;
+    ring.addEventListener('pointerdown', e => { active=true; ring.dataset.drag='1'; startY=e.clientY; startV=scopeVal(a); lastP=startV; ring.setPointerCapture(e.pointerId); e.preventDefault(); });
+    ring.addEventListener('pointermove', e => { if(!active) return; lastP=Math.max(0,Math.min(100,Math.round(startV+(startY-e.clientY)*0.6))); scopeApplyUI(a, lastP); });
+    const end = () => { if(!active) return; active=false; delete ring.dataset.drag; scopeSend(a, lastP); };
+    ring.addEventListener('pointerup', end);
+    ring.addEventListener('pointercancel', () => { active=false; delete ring.dataset.drag; });
+  }
   $('#refresh', m) && $('#refresh', m).addEventListener('click', () => requestArea(a));
   updateLive(a.id);
   syncMaster();
@@ -2113,23 +2216,22 @@ function renderSetup(m){
       <div class="actions"><button class="btn" id="copyAsh">העתק פקודה</button></div>
     </section>` : ''}
 
-    <section class="card">
-      <h2>Dropbox</h2>
-      <div class="field"><label for="dbxKey">App key</label><input id="dbxKey" class="ltr" value="${esc(cfg.dbxKey)}" placeholder="xxxxxxxxxxxxxxx" autocomplete="off"></div>
-      <div class="note">${store.get('dbx',null) ? 'מחובר ל-Dropbox.' : 'לא מחובר. ההתחברות נעשית בדף של Dropbox עם שם משתמש וסיסמה.'}</div>
+    <details class="minor" style="margin-top:2px">
+      <summary>Dropbox ${store.get('dbx',null) ? '· מחובר' : '· לא מחובר'}</summary>
+      <div class="note" style="margin-top:8px">ההתחברות מתבצעת לבד מאחורי הקלעים. אם משהו משתבש אפשר להתנתק ולהתחבר מחדש דרך „פתח מ-Dropbox”.</div>
       <details class="minor"><summary>דרך חלופית · הדבקת טוקן ידני</summary>
-        <div class="note">אם ההתחברות הרגילה לא עובדת: בדף Dropbox Settings, תחת <b>Generated access token</b>, לחץ <b>Generate</b>, העתק את הטוקן והדבק כאן. (תקף כ-4 שעות, ואז מפיקים חדש.)</div>
+        <div class="note">בדף Dropbox App Console, תחת <b>Generated access token</b>, לחץ <b>Generate</b>, העתק את הטוקן והדבק כאן. (תקף כ-4 שעות.)</div>
         <div class="sendbar"><input id="dbxTok" class="ltr" placeholder="sl...." autocomplete="off"><button class="btn primary" id="dbxTokOk">שמור טוקן</button></div>
       </details>
       <div class="actions"><button class="btn" id="dbxLogout" ${store.get('dbx',null)?'':'disabled'}>התנתק מ-Dropbox</button></div>
-    </section>`;
+    </details>`;
 
   m.querySelectorAll('#themeSeg button').forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.theme); m.querySelectorAll('#themeSeg button').forEach(x=>x.setAttribute('aria-pressed', x===b)); }));
   const sync = () => { $('#baseField').hidden = m.querySelector('input[name=mode]:checked').value!=='pdeg'; };
   m.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => { cfg.mode=r.value; saveCfg(); sync(); setLink('off','מנותק'); }));
   sync();
   $('#base').addEventListener('change', e => { let v=e.target.value.trim(); if(v && !/^https?:\/\//.test(v)) v='http://'+v; cfg.base=v; e.target.value=v; saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); });
-  $('#dbxKey').addEventListener('change', e => { cfg.dbxKey=e.target.value.trim(); saveCfg(); });
+  $('#dbxKey') && $('#dbxKey').addEventListener('change', e => { cfg.dbxKey=e.target.value.trim(); saveCfg(); });
   $('#dbxTokOk') && $('#dbxTokOk').addEventListener('click', () => {
     const tok = $('#dbxTok').value.trim(); if(!tok){ toast('הדבק טוקן'); return; }
     store.set('dbx', { access:tok, exp:Date.now()+3.5*3600*1000, manual:true }); toast('הטוקן נשמר. נסה לפתוח מ-Dropbox.'); renderSetup(m);
@@ -2174,6 +2276,7 @@ const DBX_REDIRECT = 'https://arazishaked.github.io/dynet-auth/';
 // code back automatically. Elsewhere (Scriptable / web on the PDEG) fall back to the paste-the-code flow.
 const DBX_USE_REDIRECT = NATIVE;
 async function dbxAuthUrl(){
+  ensureDbxKey();
   const v = b64url(crypto.getRandomValues(new Uint8Array(48)));
   const ch = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
   // Persist the verifier and WAIT for it, so it survives a WebView reload while the user is in Safari.
@@ -2207,6 +2310,7 @@ window.__dbxDeepCode = async function(code){
   }catch(e){ logPush('err', 'Dropbox: '+e.message); toast('חיבור Dropbox נכשל: '+e.message, 6000); }
 };
 async function dbxToken(){
+  ensureDbxKey();
   const t = store.get('dbx', null); if(!t) return null;
   if(t.manual) return t.access;                // token pasted from the console; no refresh
   if(Date.now() < t.exp - 60000) return t.access;
@@ -2245,7 +2349,7 @@ function fileDateKey(e){
 }
 async function dbxBrowse(path){
   const pane = $('#dbxPane'); if(!pane) return; pane.hidden=false;
-  if(!cfg.dbxKey){ pane.innerHTML = '<div class="note">הזן קודם App key של Dropbox בכרטיס Dropbox למטה.</div>'; return; }
+  ensureDbxKey();
   let tok=null; try{ tok = await dbxToken(); }catch(e){}
   if(!tok){
     const url = await dbxAuthUrl();
