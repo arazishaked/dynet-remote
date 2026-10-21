@@ -964,6 +964,27 @@ var DLJ = (function () {
     return { dcode: tgt[0], box: box, chunks: chunks, dirty: dirty };
   }
 
+  /* A FULL config download: every managed byte (flag bit 0x04), target value — for controllers
+     System Builder marks pending even though source==target (nothing incrementally dirty). This
+     is what SB's "Save To Device" writes in that case. Grouped into <=15-byte runs. */
+  async function deviceFullChunks(buf, duid, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
+    var tf = pick('target'), ff = pick('flags'), sf = pick('source');
+    if (!tf || !ff) return null;
+    var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array');
+    var src = sf ? await sf.async('uint8array') : tgt;
+    var box = (src.length > 2) ? src[2] : tgt[2];
+    var managed = function (i) { return (fl[i] & 0x04); };
+    var chunks = [], count = 0, N = Math.min(tgt.length, fl.length), i = 0;
+    while (i < N) {
+      if (managed(i)) { var start = i; while (i < N && managed(i) && (i - start) < 15) i++; chunks.push({ addr: start, data: tgt.slice(start, i) }); count += (i - start); }
+      else i++;
+    }
+    return { dcode: tgt[0], box: box, chunks: chunks, dirty: count };
+  }
+
   /* After a successful flash, bring one controller back to the in-sync state — exactly what
      System Builder does post "Save To Device": source := target (device now matches), clear the
      dirty bit on every managed byte (0x07 → 0x06), and empty its <DeviceStatus> in JobData.
@@ -1008,14 +1029,14 @@ var DLJ = (function () {
     return { bytes: bytes };
   }
 
-  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus, deviceFlashChunks: deviceFlashChunks, clearDeviceDirty: clearDeviceDirty };
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus, deviceFlashChunks: deviceFlashChunks, deviceFullChunks: deviceFullChunks, clearDeviceDirty: clearDeviceDirty };
 })();
 if (typeof module !== 'undefined') module.exports = DLJ;
 
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1312";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1320";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2110,29 +2131,19 @@ async function flashDevice(duid){
   let base = origDlj; if(!base){ base = await idb.get('dlj'); origDlj = base; }
   if(!base){ toast('צריך את קובץ הפרויקט. פתח אותו שוב מ-Dropbox.', 6000); return; }
   let info, edited;
-  try{ edited = await applyProjectEdits(base); info = await DLJ.deviceFlashChunks(edited.bytes, duid); }
+  // "עדכן בקר" always does a FULL config download (every managed byte) + reboot, like SB's "Save To Device".
+  try{ edited = await applyProjectEdits(base); info = await DLJ.deviceFullChunks(edited.bytes, duid); }
   catch(e){ toast('שגיאה בהכנת הנתונים: '+e.message, 6000); return; }
   if(!info || !info.chunks.length){
-    // Pending in the file but nothing to write (managed config already in sync) — just clear the mark.
+    // No managed content at all → just clear any stale "pending" mark.
     if(devPending(dv)){
-      const ok = await confirmModal(`לבקר "${dv.name||KIND[dv.kind]}" אין בתים שהשתנו לכתיבה — התצורה המנוהלת מסונכרנת.\n\nלסמן אותו כמעודכן (לנקות את סימן „ממתין לשפיכה”)?`, 'כן, סמן כמעודכן', 'ביטול');
-      if(!ok) return;
-      try{
-        const cleaned = await DLJ.clearDeviceDirty(edited.bytes, duid);
-        origDlj = cleaned.bytes.buffer; idb.put('dlj', origDlj);
-        dv.pending = false;
-        if(P.devNames) delete P.devNames[duid]; if(P.devAC) delete P.devAC[duid];
-        if(P.reassign) for(const key in P.reassign){ if(key.slice(0, key.lastIndexOf(':'))===duid) delete P.reassign[key]; }
-        P.unsaved = true; persist();
-        if(route.tab==='devices') renderDevices($('#main'));
-        toast('הבקר סומן כמעודכן ✅ — לחץ „עדכן ב-Dropbox” כדי לשמור את הקובץ.', 6500);
-      }catch(e){ toast('ניקוי הסימון נכשל: '+e.message, 6000); }
-      return;
-    }
-    toast('אין שינויים לעדכן בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000); return;
+      try{ const cleaned = await DLJ.clearDeviceDirty(edited.bytes, duid); origDlj = cleaned.bytes.buffer; idb.put('dlj', origDlj); dv.pending=false; P.unsaved=true; persist(); if(route.tab==='devices') renderDevices($('#main')); toast('אין תוכן לכתיבה בבקר — סומן כמעודכן.', 6000); }
+      catch(e){ toast('שגיאה: '+e.message, 6000); }
+    } else toast('אין תוכן לכתיבה בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000);
+    return;
   }
   const ok = await confirmModal(
-    `לעדכן את הבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\n${info.dirty} בייטים ב-${info.chunks.length} קטעים ייכתבו לזיכרון הבקר הפיזי, והבקר יאותחל.\n\n⚠️ ודא שבדקת את השינויים ב-System Builder. הפעולה משנה את החומרה.`,
+    `לעדכן את הבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\nתתבצע הורדה מלאה של כל התצורה (${info.dirty} בייטים ב-${info.chunks.length} קטעים) לזיכרון הבקר, והבקר יאותחל.\n\n⚠️ ודא שבדקת את השינויים ב-System Builder. הפעולה משנה את החומרה.`,
     'כן, עדכן בקר', 'ביטול');
   if(!ok) return;
   const prog = progressModal(`מעדכן את "${dv.name||KIND[dv.kind]}" (Box ${info.box})`);
@@ -2269,7 +2280,7 @@ function renderDevices(m){
     return `<details class="dev" data-duid="${dv.duid}" ${(q || openDevs.has(dv.duid))?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>${pend?'<span class="pendtag" title="יש שינוי בבקר שממתין לשפיכה">ממתין לשפיכה</span>':''}
       <span class="nm"><div>${esc(dv.name || '(ללא שם)')}</div><div class="dmeta">${meta}</div></span></summary>
       ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}
-      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact"><button class="btn ${pend?'primary':''} sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button><span class="muted" style="font-size:11px">${pend?'יש שינוי מוכן לשפיכה':'שופך לבקר רק את מה ששונה'}</span></div>` : ''}</details>`;
+      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact"><button class="btn ${pend?'primary':''} sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button><span class="muted" style="font-size:11px">${pend?'יש שינוי מוכן לשפיכה · הורדה מלאה':'הורדה מלאה של התצורה לבקר'}</span></div>` : ''}</details>`;
   };
   const st = Object.values(devStatus); const on = st.filter(s=>s==='online').length, off = st.filter(s=>s==='offline').length;
   m.innerHTML = `${editsBanner()}
