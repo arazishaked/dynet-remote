@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="he" dir="rtl"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}[hidden]{display:none!important}</style>
+<style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}html,body{margin:0;touch-action:manipulation}[hidden]{display:none!important}</style>
 </head><body>
 <title>DyNet Remote</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1129";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1159";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1146,10 +1146,24 @@ const DyNet = {
   lpct(b){ return b===0 ? 100 : Math.max(0, Math.min(100, Math.round((255-b)/2.54))); },
   decode(b){
     const hex = Array.from(b, hex2).join(' ');
-    if(b[0]===0xAC){                                   // DyNet2 (controller messaging — same traffic SB's monitor shows)
-      const op=b[2], dBox=(b[7]<<8)|b[8], sBox=(b[4]<<8)|b[5];
+    if(b[0]===0xAC){                                   // DyNet2
+      const op=b[2], dDev=b[6], dBox=(b[7]<<8)|b[8], sBox=(b[4]<<8)|b[5];
       const byBox = bx => P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===bx);
-      if(op===0xA0){                                    // per-channel event (e.g. a wall switch driving a load) → show area · channel
+      // ── PDEG housekeeping (status polling, sign-on scans, broadcasts) — hide from the log ──
+      if(op===0x82 || dDev===0xAA || dBox===0x5555) return { hex, skip:true };
+      if(op===0x80 && b[9]===0x01) return { hex, skip:true };
+      if(op===0x22) return { hex, skip:true };           // level poll request (the 0x23 reply carries the value)
+      // ── Logical area/channel addressing (high address byte 0x00) ──
+      if(dDev===0x00){
+        const area=b[7], ch=b[11], an=areaLabel(area), chTxt = ch ? ' · ערוץ '+ch : '';
+        if(op===0x23){                                   // channel level reply → area · channel · %
+          const pct=Math.min(100, Math.round(b[14]/2.55));
+          return { hex, kind:'level', area, ch, pct, text:`${an}${chTxt} · ${pct}%` };
+        }
+        return { hex, kind:'area', area, ch, text:`${an}${chTxt}` };
+      }
+      // ── Physical / device addressing ──
+      if(op===0xA0){                                     // per-channel event (wall switch driving a load) → area · channel
         const dv = byBox(dBox) || byBox(sBox), physCh = b[11];
         if(dv){
           const t = (P.physMap[dv.duid]||{})[physCh-1] || [];
@@ -1431,9 +1445,10 @@ async function connect(){
 const tcp = { running:false, state:'off' };
 const rxFrame = FrameReader(fr => {
   const d = DyNet.decode(fr);
+  if(d.skip) return;                                 // PDEG housekeeping — don't clutter the log
   logPush('rx', d.text, d.hex);
   if(d.kind==='preset') setLive(d.area, { preset:d.preset });
-  else if(d.kind==='level') setLive(d.area, { level:[d.ch, d.pct] });
+  else if(d.kind==='level' && d.ch) setLive(d.area, { level:[d.ch, d.pct] });  // live levels from the bus → area view updates
   else if(d.kind==='phys' && d.dv) setOut(d.dv.duid, d.ch, d.pct);
 });
 function setTcp(s){ tcp.state = s; const el = $('#tcpState'); if(el) el.textContent = { on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[s] || s; }
