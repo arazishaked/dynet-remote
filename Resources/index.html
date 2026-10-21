@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1115";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1129";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1146,9 +1146,19 @@ const DyNet = {
   lpct(b){ return b===0 ? 100 : Math.max(0, Math.min(100, Math.round((255-b)/2.54))); },
   decode(b){
     const hex = Array.from(b, hex2).join(' ');
-    if(b[0]===0xAC){                                   // DyNet2 (controller programming — same traffic SB's monitor shows)
-      const op=b[2], dBox=(b[7]<<8)|b[8];
-      const dstDv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===dBox);
+    if(b[0]===0xAC){                                   // DyNet2 (controller messaging — same traffic SB's monitor shows)
+      const op=b[2], dBox=(b[7]<<8)|b[8], sBox=(b[4]<<8)|b[5];
+      const byBox = bx => P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===bx);
+      if(op===0xA0){                                    // per-channel event (e.g. a wall switch driving a load) → show area · channel
+        const dv = byBox(dBox) || byBox(sBox), physCh = b[11];
+        if(dv){
+          const t = (P.physMap[dv.duid]||{})[physCh-1] || [];
+          if(t.length){ const [aid,cid]=t[0], ch=findCh(aid,cid); return { hex, kind:'sw', text:`${areaName(P.areas[aid])} · ${ch?chName(ch):'ערוץ '+cid}` }; }
+          return { hex, kind:'sw', text:`${dv.name||KIND[dv.kind]} · יציאה ${physCh}` };
+        }
+        return { hex, kind:'sw', text:`בקר ${dBox} · יציאה ${physCh}` };
+      }
+      const dstDv = byBox(dBox);
       const who = dstDv ? (dstDv.name||KIND[dstDv.kind]||('בקר '+dBox)) : ('בקר '+dBox);
       let act = 'פעולת בקר';
       if(op===0x9C||op===0x9D) act='עדכון בקר';
