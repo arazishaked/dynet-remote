@@ -985,12 +985,15 @@ var DLJ = (function () {
       var text = decodeXmlBytes(await jf.async('uint8array'));
       var open = '<Device duid="' + String(duid).toUpperCase() + '">', idx = text.indexOf(open);
       if (idx < 0) { open = '<Device duid="' + duid + '">'; idx = text.indexOf(open); }
+      // Match a populated <DeviceStatus>…</DeviceStatus> regardless of whitespace (System Builder
+      // writes CRLF; our own marker writes LF) — a self-closing <DeviceStatus/> is left untouched.
+      var reStatus = /<DeviceStatus>[\s\S]*?<\/DeviceStatus>/;
       var changed = false;
       while (idx >= 0) {
         var end = text.indexOf('</Device>', idx); if (end < 0) break;
         var block = text.slice(idx, end);
-        if (block.indexOf('<DyNetDevice') >= 0 && block.indexOf(DEVICE_STATUS_PENDING) >= 0) {
-          text = text.slice(0, idx) + block.replace(DEVICE_STATUS_PENDING, '<DeviceStatus/>') + text.slice(end);
+        if (block.indexOf('<DyNetDevice') >= 0 && reStatus.test(block)) {
+          text = text.slice(0, idx) + block.replace(reStatus, '<DeviceStatus/>') + text.slice(end);
           changed = true; break;
         }
         idx = text.indexOf(open, idx + open.length);
@@ -1012,7 +1015,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1259";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1312";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2109,7 +2112,25 @@ async function flashDevice(duid){
   let info, edited;
   try{ edited = await applyProjectEdits(base); info = await DLJ.deviceFlashChunks(edited.bytes, duid); }
   catch(e){ toast('שגיאה בהכנת הנתונים: '+e.message, 6000); return; }
-  if(!info || !info.chunks.length){ toast('אין שינויים לעדכן בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000); return; }
+  if(!info || !info.chunks.length){
+    // Pending in the file but nothing to write (managed config already in sync) — just clear the mark.
+    if(devPending(dv)){
+      const ok = await confirmModal(`לבקר "${dv.name||KIND[dv.kind]}" אין בתים שהשתנו לכתיבה — התצורה המנוהלת מסונכרנת.\n\nלסמן אותו כמעודכן (לנקות את סימן „ממתין לשפיכה”)?`, 'כן, סמן כמעודכן', 'ביטול');
+      if(!ok) return;
+      try{
+        const cleaned = await DLJ.clearDeviceDirty(edited.bytes, duid);
+        origDlj = cleaned.bytes.buffer; idb.put('dlj', origDlj);
+        dv.pending = false;
+        if(P.devNames) delete P.devNames[duid]; if(P.devAC) delete P.devAC[duid];
+        if(P.reassign) for(const key in P.reassign){ if(key.slice(0, key.lastIndexOf(':'))===duid) delete P.reassign[key]; }
+        P.unsaved = true; persist();
+        if(route.tab==='devices') renderDevices($('#main'));
+        toast('הבקר סומן כמעודכן ✅ — לחץ „עדכן ב-Dropbox” כדי לשמור את הקובץ.', 6500);
+      }catch(e){ toast('ניקוי הסימון נכשל: '+e.message, 6000); }
+      return;
+    }
+    toast('אין שינויים לעדכן בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000); return;
+  }
   const ok = await confirmModal(
     `לעדכן את הבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\n${info.dirty} בייטים ב-${info.chunks.length} קטעים ייכתבו לזיכרון הבקר הפיזי, והבקר יאותחל.\n\n⚠️ ודא שבדקת את השינויים ב-System Builder. הפעולה משנה את החומרה.`,
     'כן, עדכן בקר', 'ביטול');
