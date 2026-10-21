@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-0952";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1045";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1138,6 +1138,7 @@ const tcpHost = () => { try{ return new URL(cfg.base || 'http://192.168.1.200').
 const physArea = dcode => [0x60,0x65,0x49].includes(dcode);
 const isDimmable = dcode => dcode===0x65 || dcode===0x49;
 /* ───────── DyNet1 frames (raw TCP to the PDEG) ───────── */
+const DN2OP = { 0x80:'פקודה', 0x81:'מענה אתחול', 0x8C:'דיווח', 0x9A:'קריאת זיכרון', 0x9B:'מענה קריאה', 0x9C:'כתיבת זיכרון', 0x9D:'מענה כתיבה' };
 const DyNet = {
   cs(b){ let t=0; for(let i=0;i<7;i++) t+=b[i]; return (-t) & 0xFF; },
   frame(bytes){ const b = bytes.slice(0,7).map(x=>x&0xFF); b.push(this.cs(b)); return Uint8Array.from(b); },
@@ -1146,6 +1147,13 @@ const DyNet = {
   lpct(b){ return b===0 ? 100 : Math.max(0, Math.min(100, Math.round((255-b)/2.54))); },
   decode(b){
     const hex = Array.from(b, hex2).join(' ');
+    if(b[0]===0xAC){                                   // DyNet2 (device messaging — same traffic SB's monitor shows)
+      const op=b[2], srcDev=b[3], srcBox=(b[4]<<8)|b[5], dstDev=b[6], dstBox=(b[7]<<8)|b[8];
+      const nm = DN2OP[op] || ('op 0x'+hex2(op));
+      const dstDv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===dstBox);
+      const who = dstDv ? (dstDv.name||KIND[dstDv.kind]||('Box '+dstBox)) : ('Box '+dstBox);
+      return { hex, kind:'dynet2', text:`DyNet2 · ${nm} · 0x${hex2(srcDev)}→${who}` };
+    }
     if(b[0]===0x5C){
       const dv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.dcode===b[1] && d.box===b[2]);
       const who = dv ? `${dv.name||KIND[dv.kind]}${dv.location?' · '+dv.location:''}` : `0x${hex2(b[1])} Box ${b[2]}`;
@@ -1208,9 +1216,22 @@ function FrameReader(onFrame){
   let buf = new Uint8Array(0);
   return chunk => {
     const n = new Uint8Array(buf.length + chunk.length); n.set(buf); n.set(chunk, buf.length); buf = n;
-    while(buf.length >= 8){
-      if((buf[0]===0x1C || buf[0]===0x5C) && DyNet.cs(buf)===buf[7]){ onFrame(buf.slice(0,8)); buf = buf.slice(8); }
-      else buf = buf.slice(1);
+    while(buf.length >= 4){
+      const b0 = buf[0];
+      if(b0===0x1C || b0===0x5C){                       // DyNet1 — fixed 8-byte frame
+        if(buf.length < 8) break;
+        if(DyNet.cs(buf)===buf[7]){ onFrame(buf.slice(0,8)); buf = buf.slice(8); continue; }
+        buf = buf.slice(1); continue;
+      }
+      if(b0===0xAC){                                     // DyNet2 — variable length, Fletcher-checked
+        const len = (buf[1]+1)*4;
+        if(len < 4 || len > 64){ buf = buf.slice(1); continue; }
+        if(buf.length < len) break;                      // wait for the rest of the frame
+        const fr = buf.slice(0,len), ck = DyNet2.fletcher(fr.slice(0,-2));
+        if(ck[0]===fr[len-2] && ck[1]===fr[len-1]){ onFrame(fr); buf = buf.slice(len); continue; }
+        buf = buf.slice(1); continue;
+      }
+      buf = buf.slice(1);
     }
   };
 }
@@ -1545,11 +1566,24 @@ function scopeApplyUI(a,p){
   const anyOn=areaAnyOn(a); const on100=$('#pwOn'), off0=$('#pwOff');
   if(on100) on100.classList.toggle('on', anyOn); if(off0) off0.classList.toggle('on', !anyOn);
 }
-/* send the ring's value to the gateway for the current scope */
+/* send the ring's value to the gateway for the current scope (final, on release) */
 function scopeSend(a,p){
   p=Math.max(0,Math.min(100,Math.round(p)));
-  if(areaScope==='all'){ act(GW.level(a.id, 0, p, cfg.fade)); }
-  else { const c=a.channels.find(x=>x.id===areaScope); if(!c) return; act(GW.level(a.id, c.id, isSwitch(c)?(p>0?100:0):p, cfg.fade)); }
+  if(areaScope==='all'){ act(GW.level(a.id, 0, p, 0)); }
+  else { const c=a.channels.find(x=>x.id===areaScope); if(!c) return; act(GW.level(a.id, c.id, isSwitch(c)?(p>0?100:0):p, 0)); }
+}
+/* throttled live level send — fires instantly while a finger drags, ~every 110ms, with a trailing send */
+let _liveT = 0, _liveTimer = null, _livePend = null;
+function liveLevel(aid, ch, v){
+  _livePend = [aid, ch, v]; const now = Date.now();
+  const flush = () => { _liveTimer=null; if(!_livePend) return; _liveT=Date.now(); const [a,c,val]=_livePend; _livePend=null; act(GW.level(a, c, val, 0)); };
+  if(now - _liveT >= 110){ flush(); }
+  else if(!_liveTimer){ _liveTimer = setTimeout(flush, 120); }
+}
+function scopeLiveSend(a,p){
+  p=Math.max(0,Math.min(100,Math.round(p)));
+  if(areaScope==='all'){ liveLevel(a.id, 0, p); }
+  else { const c=a.channels.find(x=>x.id===areaScope); if(!c) return; liveLevel(a.id, c.id, isSwitch(c)?(p>0?100:0):p); }
 }
 /* tap a channel to focus the ring on it; tap again (or its selected state) returns to the whole area */
 function setScope(a, s){ areaScope = (areaScope===s) ? 'all' : s; syncMaster(); }
@@ -1611,8 +1645,8 @@ function renderArea(m, a){
   m.querySelectorAll('[data-sl]').forEach(s => {
     const ch=+s.dataset.sl;
     s.addEventListener('pointerdown', ()=>s.dataset.drag='1');
-    s.addEventListener('input', ()=>{ s.dataset.drag='1'; $(`[data-lvl="${ch}"]`).textContent = s.value+'%'; paintCh(ch, +s.value); syncMaster(); });
-    s.addEventListener('change', ()=>{ delete s.dataset.drag; act(GW.level(a.id, ch, +s.value, cfg.fade)); });
+    s.addEventListener('input', ()=>{ s.dataset.drag='1'; $(`[data-lvl="${ch}"]`).textContent = s.value+'%'; paintCh(ch, +s.value); syncMaster(); liveLevel(a.id, ch, +s.value); });
+    s.addEventListener('change', ()=>{ delete s.dataset.drag; act(GW.level(a.id, ch, +s.value, 0)); });
   });
   m.querySelectorAll('[data-sw]').forEach(t => t.addEventListener('click', () => {
     const on = t.getAttribute('aria-checked')!=='true'; act(GW.level(a.id, +t.dataset.sw, on?100:0, 0));
@@ -1624,12 +1658,20 @@ function renderArea(m, a){
     if(e.target.closest('input,button,.toggle,.icon,.rename')) return;
     setScope(a, +el.dataset.ch);
   }));
-  // drag the hero ring (vertical) to set the current scope; send to the gateway on release
+  // drag the hero ring: the cap follows the finger's angle around the ring (a real dial);
+  // the dim level is sent live while dragging, not only on release.
   const ring = $('#ring');
   if(ring){
-    let active=false, startY=0, startV=0, lastP=0;
-    ring.addEventListener('pointerdown', e => { active=true; ring.dataset.drag='1'; startY=e.clientY; startV=scopeVal(a); lastP=startV; ring.setPointerCapture(e.pointerId); e.preventDefault(); });
-    ring.addEventListener('pointermove', e => { if(!active) return; lastP=Math.max(0,Math.min(100,Math.round(startV+(startY-e.clientY)*0.6))); scopeApplyUI(a, lastP); });
+    let active=false, rect=null, lastP=0;
+    const angP = (e, stick) => {
+      const dx = e.clientX - (rect.left + rect.width/2), dy = e.clientY - (rect.top + rect.height/2);
+      let deg = Math.atan2(dx, -dy) * 180/Math.PI; if(deg<0) deg += 360;   // clockwise from the top (12 o'clock)
+      let p = deg/3.6;
+      if(stick){ if(lastP>70 && p<30) p=100; else if(lastP<30 && p>70) p=0; }  // stick at the top gap instead of wrapping 0↔100
+      return Math.max(0, Math.min(100, Math.round(p)));
+    };
+    ring.addEventListener('pointerdown', e => { active=true; ring.dataset.drag='1'; rect=ring.getBoundingClientRect(); lastP=angP(e,false); scopeApplyUI(a,lastP); scopeLiveSend(a,lastP); ring.setPointerCapture(e.pointerId); e.preventDefault(); });
+    ring.addEventListener('pointermove', e => { if(!active) return; lastP=angP(e,true); scopeApplyUI(a,lastP); scopeLiveSend(a,lastP); });
     const end = () => { if(!active) return; active=false; delete ring.dataset.drag; scopeSend(a, lastP); };
     ring.addEventListener('pointerup', end);
     ring.addEventListener('pointercancel', () => { active=false; delete ring.dataset.drag; });
@@ -2158,7 +2200,7 @@ function pollDevicesIn(){}
 function logHtml(l){ const tag = { tx:'שליחה', rx:'תשובה', err:'שגיאה' }[l.dir]; return `<div class="ln"><span class="d ${l.dir}">${tag}</span><span class="t">${l.t.toLocaleTimeString('he-IL',{hour12:false})}</span><span class="txt">${esc(l.text)}</span>${l.detail?`<span class="hex">${esc(l.detail)}</span>`:''}</div>`; }
 function renderLog(m){
   m.innerHTML = `<div class="actions"><button class="btn ghost" id="logClear">נקה</button><span class="muted" style="font-size:12.5px;align-self:center">${logLines.length} רשומות</span></div>
-    <div class="log" id="log">${logLines.length ? logLines.slice().reverse().map(logHtml).join('') : '<div class="empty">אין עדיין פעילות. פתח אזור או לחץ על פריסט.</div>'}</div>`;
+    <div class="log" id="log">${logLines.length ? logLines.slice().reverse().map(logHtml).join('') : '<div class="empty">אין עדיין פעילות. ביומן תופיע כל תעבורת ה-DyNet מהרשת — מפסקים, סצנות, שינויי עומק, ופעולות של System Builder — בזמן אמת (דורש חיבור ל-PDEG).</div>'}</div>`;
   $('#logClear').addEventListener('click', () => { logLines.length=0; renderLog(m); });
 }
 function appendLog(l){ const box=$('#log'); if(!box) return; const e=box.querySelector('.empty'); if(e) e.remove(); box.insertAdjacentHTML('afterbegin', logHtml(l)); while(box.children.length>200) box.lastElementChild.remove(); }
