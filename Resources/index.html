@@ -186,6 +186,8 @@ details.dev>summary{list-style:none;cursor:pointer}
 details.dev>summary::-webkit-details-marker{display:none}
 .dev .row{border:0;border-radius:0;background:none}
 .dev .kind{font-size:10px;font-weight:600;border-radius:9px;padding:4px 10px;flex:none;background:var(--accent-soft);color:var(--accent-text)}
+.pendtag{font-size:10px;font-weight:700;border-radius:9px;padding:4px 9px;flex:none;background:var(--accent-grad);color:var(--on-accent);box-shadow:0 0 12px -2px var(--glow);display:inline-flex;align-items:center;gap:4px}
+.pendtag::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--on-accent);opacity:.7}
 .dev .kind[data-k="gateway"]{background:color-mix(in srgb,var(--info) 18%,transparent);color:var(--info)}
 .pchs{display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;padding:6px 16px 12px;font-size:13px;align-items:center}
 .pchs .map{min-width:0}
@@ -382,6 +384,10 @@ var DLJ = (function () {
         });
       });
       var n = chCount[duid] || 0;
+      // Pending-flash flag: a populated <DeviceStatus> (Modified/PendingUpdates) means System Builder
+      // considers this controller to have unflashed changes. An empty <DeviceStatus/> = in-sync.
+      var dstat = dn && kid(dn, 'DeviceStatus');
+      var pending = !!(dstat && kids(dstat).length > 0);
       devices[duid] = {
         duid: duid,
         name: (props['Device Name'] || '').trim(),
@@ -390,7 +396,8 @@ var DLJ = (function () {
         fw: fw,
         serial: props['Serial Number 64'] || '',
         mac: props['MAC Address'] || '',
-        channels: n
+        channels: n,
+        pending: pending
       };
       order.push(duid);
     });
@@ -1005,7 +1012,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1240";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1259";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1272,6 +1279,7 @@ function FrameReader(onFrame){
 
 function setProject(p, buf){
   P = p; origDlj = buf || null;
+  P.unsaved = false;                        // freshly loaded file has nothing unsaved yet
   openFolders.clear(); openDevs.clear();   // new project opens fully collapsed
   // Auto-target the gateway IP stored in the project (if any), so each project
   // connects to its own PDEG without the user retyping the address.
@@ -1561,8 +1569,9 @@ function pendingEditCount(){
 }
 function editsBanner(){
   const n = pendingEditCount();
-  if(!n) return '';
-  return `<div class="banner"><span><b>${n}</b> שינויים שלא נשמרו בקובץ הפרויקט.</span><button class="btn primary" data-save>שמור לקובץ</button></div>`;
+  if(!n && !(P&&P.unsaved)) return '';
+  const txt = n ? `<b>${n}</b> שינויים שלא נשמרו בקובץ הפרויקט.` : 'יש שינויים שלא נשמרו לקובץ.';
+  return `<div class="banner"><span>${txt}</span><button class="btn primary" data-save>${P&&P.source&&P.source.dropbox?'עדכן ב-Dropbox':'שמור לקובץ'}</button></div>`;
 }
 document.addEventListener('click', e => { if(e.target.closest('[data-save]')) saveProject(); });
 
@@ -2122,6 +2131,8 @@ async function flashDevice(duid){
       if(P.devNames) delete P.devNames[duid];
       if(P.devAC) delete P.devAC[duid];
       if(P.reassign) for(const key in P.reassign){ if(key.slice(0, key.lastIndexOf(':'))===duid) delete P.reassign[key]; }
+      if(dv) dv.pending = false;          // the controller is now in sync → its "ממתין לשפיכה" sign clears
+      P.unsaved = true;                    // the file changed (dirty cleared) — keep "עדכן ב-Dropbox" available
       persist();
       prog.msg('✅ העדכון הושלם. הבקר אותחל.');
     }catch(e){
@@ -2146,21 +2157,22 @@ async function saveProject(){
   try{
     toast('מעדכן את קובץ הפרויקט…');
     if(P.source && P.source.dropbox){
-      const { changed } = await dbxSaveProject(P.source.dropbox);
-      if(changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים). לא נדרס כלום.', 7000); return; }
-      toast(`נשמר ב-Dropbox (${changed} שינויים).`, 6000);
-      P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; persist(); render();
+      const { uploaded } = await dbxSaveProject(P.source.dropbox);
+      if(!uploaded){ toast('אין שינויים לעדכון בקובץ.', 7000); return; }
+      toast('נשמר ב-Dropbox ✅', 6000);
+      P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; P.unsaved = false; persist(); render();
     } else {
       if(!origDlj) origDlj = await idb.get('dlj');
       if(!origDlj){ toast('כדי לשמור צריך את קובץ ה-DLJ המקורי. פתח אותו שוב מ-Dropbox או מהטלפון — השינויים יישמרו.', 6000); return; }
       const res = await applyProjectEdits(origDlj);
-      if(res.changed === 0){ toast('לא נמצאו שינויים לעדכון בקובץ (ייתכן שכבר עדכניים).', 7000); return; }
-      if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(res.bytes) }); }
-      else { const blob = new Blob([res.bytes], { type:'application/octet-stream' });
+      if(res.changed === 0 && !P.unsaved){ toast('לא נמצאו שינויים לעדכון בקובץ.', 7000); return; }
+      const bytes = res.changed>0 ? res.bytes : new Uint8Array(origDlj);
+      if(NATIVE){ await native({ kind:'saveFile', name:P.fileName||'project.dlj', b64:u8ToB64(bytes) }); }
+      else { const blob = new Blob([bytes], { type:'application/octet-stream' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = P.fileName || 'project.dlj'; document.body.appendChild(a); a.click(); a.remove(); }
-      toast(`הקובץ המעודכן ירד למכשיר (${res.changed} שינויים).`, 6000);
-      origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
-      P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; persist(); render();
+      toast('הקובץ המעודכן ירד למכשיר ✅', 6000);
+      origDlj = (res.changed>0 ? res.bytes.buffer : origDlj); idb.put('dlj', origDlj);
+      P.edits = {}; P.reassign = {}; P.devNames = {}; P.devAC = {}; P.unsaved = false; persist(); render();
     }
   }catch(e){ toast('השמירה נכשלה: '+e.message, 6000); }
 }
@@ -2168,6 +2180,9 @@ async function saveProject(){
 /* Devices tab */
 const KORDER = { gateway:0, relay:1, load:1, dali:2, panel:3, other:4 };
 function statusOf(dv){ const k=devKey(dv); return k ? (devStatus[k]||'unknown') : 'unknown'; }
+// A controller "needs flash" if the file marks it pending (DeviceStatus) or it has unsaved in-app edits.
+function devHasEdits(duid){ return !!((P.devNames&&P.devNames[duid]&&Object.keys(P.devNames[duid]).length) || (P.devAC&&P.devAC[duid]&&Object.keys(P.devAC[duid]).length) || Object.keys(P.reassign||{}).some(k=>k.slice(0,k.lastIndexOf(':'))===duid)); }
+function devPending(dv){ return !!(dv && (dv.pending || devHasEdits(dv.duid))); }
 function devMatches(dv, q){
   if(!q) return true;
   if((dv.name||'').toLowerCase().includes(q)) return true;
@@ -2229,10 +2244,11 @@ function renderDevices(m){
       rows.push(`<span class="n">${n+1}</span><span class="map">${t || '<span class="muted">לא משויך</span>'} ${asg}</span><span class="oc">${ctl}</span>`);
     }
     const meta = [dv.box!=null ? 'Box '+dv.box : '', dv.dcode!=null ? '0x'+hex2(dv.dcode) : '', dv.channels ? dv.channels+' out' : '', dv.fw ? 'FW '+dv.fw : '', dv.serial ? 'S/N '+dv.serial : ''].filter(Boolean).map(x=>`<span>${esc(x)}</span>`).join('');
-    return `<details class="dev" data-duid="${dv.duid}" ${(q || openDevs.has(dv.duid))?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>
+    const pend = devPending(dv);
+    return `<details class="dev" data-duid="${dv.duid}" ${(q || openDevs.has(dv.duid))?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>${pend?'<span class="pendtag" title="יש שינוי בבקר שממתין לשפיכה">ממתין לשפיכה</span>':''}
       <span class="nm"><div>${esc(dv.name || '(ללא שם)')}</div><div class="dmeta">${meta}</div></span></summary>
       ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}
-      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact"><button class="btn primary sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button><span class="muted" style="font-size:11px">שופך לבקר רק את מה ששונה</span></div>` : ''}</details>`;
+      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact"><button class="btn ${pend?'primary':''} sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button><span class="muted" style="font-size:11px">${pend?'יש שינוי מוכן לשפיכה':'שופך לבקר רק את מה ששונה'}</span></div>` : ''}</details>`;
   };
   const st = Object.values(devStatus); const on = st.filter(s=>s==='online').length, off = st.filter(s=>s==='offline').length;
   m.innerHTML = `${editsBanner()}
@@ -2332,9 +2348,9 @@ function renderSetup(m){
       <div id="dbxPane" hidden></div>
       ${P ? `<div class="savebox">
         <h2 style="margin-top:4px">שמירה</h2>
-        <div class="note">${pendingEditCount() ? `<b>${pendingEditCount()}</b> שינויים שלא נשמרו.` : 'אין שינויים שלא נשמרו.'}</div>
+        <div class="note">${(pendingEditCount()||P.unsaved) ? `יש שינויים שלא נשמרו לקובץ${pendingEditCount()?` (<b>${pendingEditCount()}</b>)`:''}. לחץ „עדכן ב-Dropbox” כדי לשמור.` : 'אין שינויים שלא נשמרו.'}</div>
         <div class="actions">
-          <button class="btn primary" id="saveCur" ${pendingEditCount()?'':'disabled'}>${P.source&&P.source.dropbox?'עדכן ב-Dropbox':'שמור לקובץ'}</button>
+          <button class="btn primary" id="saveCur" ${(pendingEditCount()||P.unsaved)?'':'disabled'}>${P.source&&P.source.dropbox?'עדכן ב-Dropbox':'שמור לקובץ'}</button>
           <button class="btn" id="saveAsBtn">שמור כקובץ חדש ל-Dropbox</button>
         </div>
         <div class="sendbar" id="saveAsRow" hidden><input id="saveAsName" placeholder="שם הקובץ החדש" value="${esc(P.name||'DyNet')}"><button class="btn primary" id="saveAsOk">שמור</button></div>
@@ -2395,7 +2411,7 @@ function renderSetup(m){
   $('#saveAsBtn') && $('#saveAsBtn').addEventListener('click', () => { const r=$('#saveAsRow'); if(r){ r.hidden=!r.hidden; if(!r.hidden) $('#saveAsName').focus(); } });
   $('#saveAsOk') && $('#saveAsOk').addEventListener('click', async () => {
     const nm = $('#saveAsName').value.trim(); if(!nm){ toast('הזן שם לקובץ'); return; }
-    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; P.reassign={}; P.devNames={}; P.devAC={}; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
+    try{ toast('מעלה ל-Dropbox…'); const path = await dbxSaveAs(nm); P.edits={}; P.reassign={}; P.devNames={}; P.devAC={}; P.unsaved=false; persist(); toast('נשמר כקובץ חדש: '+path.split('/').pop(), 6000); renderSetup(m); }
     catch(e){ toast(e.message, 6000); }
   });
   $('#scName') && $('#scName').addEventListener('change', e => { cfg.shortcutName = e.target.value.trim() || 'Dynet Send'; saveCfg(); });
@@ -2599,13 +2615,15 @@ async function dbxSaveProject(id){
     base = await dr.arrayBuffer();
   }
   const res = await applyProjectEdits(base);
-  if(res.changed === 0) return { changed:0 };
+  // Upload when there are pending edits OR the base itself changed (e.g. after a flash cleared a device).
+  if(res.changed === 0 && !P.unsaved) return { changed:0, uploaded:false };
+  const body = res.changed>0 ? res.bytes : new Uint8Array(base);
   const r = await xfetch('https://content.dropboxapi.com/2/files/upload', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/octet-stream',
-    'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body:res.bytes });
+    'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body });
   if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
   if(!r.ok) throw new Error('העלאה נכשלה ('+r.status+')');
-  origDlj = res.bytes.buffer; idb.put('dlj', origDlj);
-  return { changed: res.changed };
+  origDlj = (res.changed>0 ? res.bytes.buffer : base); idb.put('dlj', origDlj);
+  return { changed: res.changed, uploaded:true };
 }
 /* Upload the (edited) project as a NEW .dlj in Dropbox under a chosen name. */
 async function dbxSaveAs(name){
