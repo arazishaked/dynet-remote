@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1111";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1115";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2201,10 +2201,31 @@ function pollDevicesIn(){}
 
 /* Log tab */
 function logHtml(l){ const tag = { tx:'שליחה', rx:'תשובה', err:'שגיאה' }[l.dir]; return `<div class="ln"><span class="d ${l.dir}">${tag}</span><span class="t">${l.t.toLocaleTimeString('he-IL',{hour12:false})}</span><span class="txt">${esc(l.text)}</span>${l.detail?`<span class="hex">${esc(l.detail)}</span>`:''}</div>`; }
+function logExportText(){
+  return logLines.map(l => `${l.t.toLocaleTimeString('he-IL',{hour12:false})}  ${({tx:'TX',rx:'RX',err:'ERR'})[l.dir]||l.dir}  ${l.text}${l.detail?'  |  '+l.detail:''}`).join('\n');
+}
 function renderLog(m){
-  m.innerHTML = `<div class="actions"><button class="btn ghost" id="logClear">נקה</button><span class="muted" style="font-size:12.5px;align-self:center">${logLines.length} רשומות</span></div>
+  m.innerHTML = `<div class="actions"><button class="btn" id="logExport">שתף לוג</button><button class="btn ghost" id="logClear">נקה</button><span class="muted" style="font-size:12.5px;align-self:center">${logLines.length} רשומות</span></div>
     <div class="log" id="log">${logLines.length ? logLines.slice().reverse().map(logHtml).join('') : '<div class="empty">אין עדיין פעילות. ביומן תופיע כל תעבורת ה-DyNet מהרשת — מפסקים, סצנות, שינויי עומק, ופעולות של System Builder — בזמן אמת (דורש חיבור ל-PDEG).</div>'}</div>`;
   $('#logClear').addEventListener('click', () => { logLines.length=0; renderLog(m); });
+  $('#logExport').addEventListener('click', () => {
+    const txt = logExportText();
+    if(!txt){ toast('היומן ריק'); return; }
+    const done = () => toast('הלוג הועתק — הדבק לי אותו כאן', 4000);
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done, () => showLogText(txt)); }
+    else showLogText(txt);
+  });
+}
+function showLogText(txt){
+  const ov = document.createElement('div'); ov.className='modal-ov';
+  ov.innerHTML = `<div class="modal"><div class="modal-msg">בחר הכול והעתק את היומן, ואז הדבק לי אותו:</div>
+    <textarea readonly style="width:100%;height:200px;direction:ltr;font-family:var(--mono);font-size:11px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:10px;padding:8px"></textarea>
+    <div class="modal-btns"><button class="btn primary" data-copy>העתק</button><button class="btn ghost" data-close>סגור</button></div></div>`;
+  const ta = ov.querySelector('textarea'); ta.value = txt;
+  ov.querySelector('[data-copy]').onclick = () => { ta.focus(); ta.select(); try{ document.execCommand('copy'); toast('הועתק'); }catch(e){ toast('סמן ידנית והעתק'); } };
+  ov.querySelector('[data-close]').onclick = () => ov.remove();
+  ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
 }
 function appendLog(l){ const box=$('#log'); if(!box) return; const e=box.querySelector('.empty'); if(e) e.remove(); box.insertAdjacentHTML('afterbegin', logHtml(l)); while(box.children.length>200) box.lastElementChild.remove(); }
 
