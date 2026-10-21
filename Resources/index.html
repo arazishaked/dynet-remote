@@ -131,7 +131,7 @@ nav.tabs button[aria-current="page"] svg{color:var(--accent-text)}
 .ring .amb{position:absolute;inset:24px;border-radius:50%;background:radial-gradient(circle,var(--glow),transparent 68%);filter:blur(10px);opacity:.6}
 .ring .tk,.ring .arc{position:absolute;inset:0;border-radius:50%;-webkit-mask:radial-gradient(circle,transparent 64%,#000 65%);mask:radial-gradient(circle,transparent 64%,#000 65%)}
 .ring .tk{background:var(--track)}
-.ring .arc{background:conic-gradient(from -90deg,#ff6f12,#ffab40 42%,#ffe0a8 calc(var(--p,0)*1%),transparent 0)}
+.ring .arc{background:conic-gradient(from 0deg,#ff7f1f,#ffb85e calc(var(--p,0)*1%),transparent 0)}
 .ring .cap{position:absolute;inset:0;rotate:calc(var(--p,0)*3.6deg)}
 .ring .cap .cdot{position:absolute;top:3px;left:50%;translate:-50%;width:15px;height:15px;border-radius:50%;background:#fff3dd;box-shadow:0 0 16px 3px var(--glow-strong),0 0 0 4px var(--bg)}
 .ring[style*="--p:0"] .cap,.ring[data-off] .cap{display:none}
@@ -1005,7 +1005,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1045";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1021-1111";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1138,7 +1138,6 @@ const tcpHost = () => { try{ return new URL(cfg.base || 'http://192.168.1.200').
 const physArea = dcode => [0x60,0x65,0x49].includes(dcode);
 const isDimmable = dcode => dcode===0x65 || dcode===0x49;
 /* ───────── DyNet1 frames (raw TCP to the PDEG) ───────── */
-const DN2OP = { 0x80:'פקודה', 0x81:'מענה אתחול', 0x8C:'דיווח', 0x9A:'קריאת זיכרון', 0x9B:'מענה קריאה', 0x9C:'כתיבת זיכרון', 0x9D:'מענה כתיבה' };
 const DyNet = {
   cs(b){ let t=0; for(let i=0;i<7;i++) t+=b[i]; return (-t) & 0xFF; },
   frame(bytes){ const b = bytes.slice(0,7).map(x=>x&0xFF); b.push(this.cs(b)); return Uint8Array.from(b); },
@@ -1147,28 +1146,32 @@ const DyNet = {
   lpct(b){ return b===0 ? 100 : Math.max(0, Math.min(100, Math.round((255-b)/2.54))); },
   decode(b){
     const hex = Array.from(b, hex2).join(' ');
-    if(b[0]===0xAC){                                   // DyNet2 (device messaging — same traffic SB's monitor shows)
-      const op=b[2], srcDev=b[3], srcBox=(b[4]<<8)|b[5], dstDev=b[6], dstBox=(b[7]<<8)|b[8];
-      const nm = DN2OP[op] || ('op 0x'+hex2(op));
-      const dstDv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===dstBox);
-      const who = dstDv ? (dstDv.name||KIND[dstDv.kind]||('Box '+dstBox)) : ('Box '+dstBox);
-      return { hex, kind:'dynet2', text:`DyNet2 · ${nm} · 0x${hex2(srcDev)}→${who}` };
+    if(b[0]===0xAC){                                   // DyNet2 (controller programming — same traffic SB's monitor shows)
+      const op=b[2], dBox=(b[7]<<8)|b[8];
+      const dstDv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===dBox);
+      const who = dstDv ? (dstDv.name||KIND[dstDv.kind]||('בקר '+dBox)) : ('בקר '+dBox);
+      let act = 'פעולת בקר';
+      if(op===0x9C||op===0x9D) act='עדכון בקר';
+      else if(op===0x9A||op===0x9B) act='קריאת בקר';
+      else if(op===0x81) act='אתחול בקר';
+      else if(op===0x80) act = (b[9]===0x08) ? 'השתקת בקר' : (b[9]===0x00 ? 'אתחול בקר' : 'פקודת בקר');
+      return { hex, kind:'dynet2', text:`${act} · ${who}` };
     }
     if(b[0]===0x5C){
       const dv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.dcode===b[1] && d.box===b[2]);
-      const who = dv ? `${dv.name||KIND[dv.kind]}${dv.location?' · '+dv.location:''}` : `0x${hex2(b[1])} Box ${b[2]}`;
+      const who = dv ? `${dv.name||KIND[dv.kind]}${dv.location?' · '+dv.location:''}` : `בקר ${b[2]}`;
       if(b[3]===0x92) return { hex, kind:'phys', dv, ch:b[4], pct:Math.round(b[5]/2.54), text:`${who} · יציאה ${b[4]} → ${Math.round(b[5]/2.54)}%` };
-      return { hex, kind:'phys?', dv, text:`${who} · הודעה פיזית 0x${hex2(b[3])}` };
+      return { hex, kind:'phys?', dv, text:`${who} · פעולה פיזית` };
     }
-    if(b[0]!==0x1C) return { hex, kind:'other', text:'הודעה 0x'+hex2(b[0]) };
+    if(b[0]!==0x1C) return { hex, kind:'other', text:'הודעה ברשת' };
     const area=b[1], d1=b[2], op=b[3], d2=b[4], d3=b[5], an=areaLabel(area);
     if(op<=3 || (op>=0x0A && op<=0x0D)){ const p=d3*8+(op<=3?op:op-6)+1; return { hex, kind:'preset', area, preset:p, text:`${an} · פריסט P${p}` }; }
     if(op===0x04) return { hex, kind:'preset', area, preset:4, text:`${an} · כיבוי` };
-    if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · דיווח פריסט P${d1+d3*8+1}` };
+    if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · פריסט P${d1+d3*8+1}` };
     if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ערוץ ${d1+1} · ${this.lpct(d3)}%` };
     if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':'ערוץ '+(d1+1)} → ${this.lpct(d2)}%` };
     if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
-    return { hex, kind:'other', text:`${an} · opcode 0x${hex2(op)}` };
+    return { hex, kind:'other', text:`${an} · פעולה` };
   }
 };
 /* ───────── DyNet2 device-memory protocol (controller flashing / "Save To Device") ─────────
