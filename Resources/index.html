@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-0703";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0726";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1208,7 +1208,8 @@ const DyNet = {
           const txt = dim
             ? (pr===1?'הדלקה · 100%':(pr===4?'כיבוי · 0%':'פריסט '+pr))
             : (pr===1?'פריסט 1 · הדלקה':(pr===4?'פריסט 4 · כיבוי':'פריסט '+pr));
-          return { hex, kind:'preset2', area, ch, text:`${an}${chTxt} · ${txt}` };
+          const pct = pr===1?100:(pr===4?0:null);        // on/off presets map to a level; scene presets unknown
+          return { hex, kind:'preset2', area, ch, preset:pr, pct, text:`${an}${chTxt} · ${txt}` };
         }
         if(op===0x01){                                   // area preset recall from a panel → preset number in payload byte b[10]
           const pr = b[10] || b[9];
@@ -1579,9 +1580,16 @@ const rxFrame = FrameReader(fr => {
   const d = DyNet.decode(fr);
   if(d.skip) return;                                 // PDEG housekeeping — don't clutter the log
   logPush('rx', d.text, d.hex);
-  if(d.kind==='preset') setLive(d.area, { preset:d.preset });
-  else if(d.kind==='level' && d.ch) setLive(d.area, { level:[d.ch, d.pct] });  // live levels from the bus → area view updates
-  else if(d.kind==='phys' && d.dv) setOut(d.dv.duid, d.ch, d.pct);
+  // Reflect EVERY field action — wall switch, System Builder, another app — in the Areas & Devices
+  // views, not only commands we sent ourselves. (d.ch===0/undefined ⇒ the whole area.)
+  if(d.area!=null){
+    if(d.kind==='level') setLive(d.area, { level:[d.ch||0, d.pct] });
+    else if(d.kind==='preset'){ setLive(d.area, { preset:d.preset });
+      if(d.preset===1) setLive(d.area, { level:[0,100] }); else if(d.preset===4) setLive(d.area, { level:[0,0] }); }
+    else if(d.kind==='preset2'){ if(d.preset!=null) setLive(d.area, { preset:d.preset });
+      if(d.pct!=null) setLive(d.area, { level:[d.ch||0, d.pct] }); }
+  }
+  if(d.kind==='phys' && d.dv) setOut(d.dv.duid, d.ch, d.pct);
 });
 function setTcp(s){ tcp.state = s; const el = $('#tcpState'); if(el) el.textContent = { on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[s] || s; }
 async function tcpListen(){
