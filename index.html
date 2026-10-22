@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-1136";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-1126";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1256,11 +1256,11 @@ const DyNet = {
       const pct = pr===4 ? 0 : (pr===1 && !dim ? 100 : null);   // off=0; on-level of a dimmer depends on the preset, so the channel read fills it in
       return { hex, kind:'preset2', area, ch, preset:pr, pct, text:`${an} · ${ch?chLabel(area, ch):'כל הערוצים'} · ${txt}` };
     }
-    if(op>=0x80 && op<=0x87 && d1!==0x00){           // "recall channel level" (System Builder / app): 1C area <level> <0x80|chLow> <bank> <fade> FF
-      const chLow = op & 0x07, bank = (d2===0xFF ? 0 : d2), ch = chLow + 1 + bank*8, pct = this.lpct(d1);
-      return { hex, kind:'level', area, ch, pct, text:`${an} · ${chLabel(area, ch)} → ${pct}%` };
+    if(op===0x80){                                   // System Builder's channel command (1C area ch 80 level 00 FF) — level is a direct 0–255 value in byte4
+      const all = d1===0xFF, pct = Math.min(100, Math.round(d2/2.55));
+      return { hex, kind:'level', area, ch: all?0:d1+1, pct, text:`${an} · ${all?'כל הערוצים':chLabel(area, d1+1)} → ${pct}%` };
     }
-    if(op===0x83) return { hex, kind:'area', area, text:`${an} · מיזוג → ${d2}` };   // climate ("מיזוג") areas: byte2 is 0x00, a setpoint value sits in byte4
+    if(op===0x83) return { hex, kind:'area', area, text:`${an} · מיזוג → ${d2}` };   // climate ("מיזוג") areas carry a setpoint-style value in byte4
     if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
     return { hex, kind:'other', text:`${an} · פעולה` };
   }
@@ -1441,13 +1441,11 @@ const GW = {
     logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a, c)} → ${pct}%`);
     setLive(a, { level:[c,pct] }); confirmField(a, c);
   },
-  /* Set an area/channel over DyNet.
+  /* Set an area/channel over DyNet, in the dialect auto-detected from the bus.
      DyNet2 → the byte-perfect op 0x10 path (works, left untouched).
-     DyNet1 → "recall channel level" exactly as System Builder sends it, verified byte-for-byte against
-     a bus capture:  1C <area> <level> <0x80|chLow> <bank> <fade> 0xFF
-       level: inverted, 255-round(pct*2.54)  (0x01=100%, 0xFF=0%)
-       channel N (1-based): chLow=(N-1)&7, bank=(N-1)>>3 (bank 0 is sent as 0xFF)
-     e.g. area12 ch1 100% → 1C 0C 01 80 FF 00 FF 59 ; ch10 100% → 1C 0C 01 81 01 00 FF 56. */
+     DyNet1 (or unknown) → op 0x6B, exactly as this site's wall switches drive the bus — verified
+     byte-for-byte against captured switch frames (1C 0B 00 6B 00 64 FF 0B = 100%, …00 00 FF 6F = off).
+     The old op 0x71 isn't a dialect these controllers act on, which is why DyNet control did nothing. */
   async levelDynet(a, c, pct, fade){
     if(busProto==='dynet2'){
       const fadeMs = Math.round((fade||0)*1000);
@@ -1459,15 +1457,11 @@ const GW = {
       }
       return;
     }
-    const lvl = 255 - Math.round(Math.max(0, Math.min(100, pct)) * 2.54);   // inverted level byte
-    const fb  = Math.min(255, Math.round((fade||0) * 50));                  // fade: 50 units = 1.00s
-    const chans = c===0 ? ((P.areas[a]&&P.areas[a].channels.map(x=>x.id))||[]) : [c];
-    for(const ch of chans){
-      const idx = ch - 1, b3 = 0x80 + (idx & 7), bank = idx >> 3, b4 = bank===0 ? 0xFF : (bank & 0xff);
-      const fr = DyNet.frame([0x1C, a&0xff, lvl&0xff, b3, b4, fb&0xff, 0xFF]);
-      await this.sendRaw(fr);
-      logPush('tx', `${areaLabel(a)} · ${chLabel(a, ch)} → ${pct}%`, Array.from(fr, hex2).join(' '));
-    }
+    const L = Math.max(0, Math.min(100, Math.round(pct)));   // 0x6B carries a direct 0–100 level
+    const chByte = (c===0) ? 0x00 : ((c-1) & 0xff);          // 0x00 = the whole area
+    const fr = DyNet.frame([0x1C, a&0xff, chByte, 0x6B, 0x00, L&0xff, 0xFF]);
+    await this.sendRaw(fr);
+    logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a,c)} → ${pct}%`, Array.from(fr, hex2).join(' '));
   },
   async sendRaw(fr){
     const r = await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(fr) });
