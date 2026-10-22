@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-1126";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-1113";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1250,11 +1250,9 @@ const DyNet = {
     if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · פריסט P${d1+d3*8+1}` };
     if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ${chLabel(area, d1+1)} · ${this.lpct(d3)}%` };
     if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':chLabel(area, d1+1)} → ${this.lpct(d2)}%` };
-    if(op===0x6B){                                   // "fade channel to preset" — byte4 = preset (0→P1 'High'/on, 3→P4 'Off'), byte5 = FADE TIME (not a level!)
-      const pr = d2 + 1, ch = d1===0xFF ? 0 : d1+1, c = ch ? findCh(area, ch) : null, dim = c && !isSwitch(c);
-      const txt = pr===1 ? (dim?'הדלקה':'פריסט 1 · הדלקה') : (pr===4 ? (dim?'כיבוי':'פריסט 4 · כיבוי') : 'פריסט '+pr);
-      const pct = pr===4 ? 0 : (pr===1 && !dim ? 100 : null);   // off=0; on-level of a dimmer depends on the preset, so the channel read fills it in
-      return { hex, kind:'preset2', area, ch, preset:pr, pct, text:`${an} · ${ch?chLabel(area, ch):'כל הערוצים'} · ${txt}` };
+    if(op===0x6B){                                   // keypad/integration "fade area to level" — byte5 is a direct 0–100 percent (64→100%, 00→0%)
+      const all = d1===0x00 || d1===0xFF, pct = Math.max(0, Math.min(100, d3));
+      return { hex, kind:'level', area, ch: all?0:d1+1, pct, text:`${an} · ${all?'כל הערוצים':chLabel(area, d1+1)} → ${pct}%` };
     }
     if(op===0x80){                                   // System Builder's channel command (1C area ch 80 level 00 FF) — level is a direct 0–255 value in byte4
       const all = d1===0xFF, pct = Math.min(100, Math.round(d2/2.55));
