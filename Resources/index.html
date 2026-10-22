@@ -83,6 +83,9 @@ nav.tabs button[aria-current="page"] svg{color:var(--accent-text)}
 .summary{display:flex;flex-wrap:wrap;gap:8px}
 .pill{font-size:12px;border-radius:12px;padding:8px 13px;background:var(--surface);border:1px solid var(--line);color:var(--muted);white-space:nowrap}
 .pill b{color:var(--accent-text);font-weight:700}
+.stpill{display:inline-flex;align-items:center;gap:7px;cursor:pointer}
+.stpill .sdot{width:9px;height:9px}
+.stpill.on{border-color:var(--accent-border);background:var(--accent-soft)}
 
 /* tree / lists */
 .group{background:transparent;border:0;border-radius:0;overflow:visible}
@@ -1036,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1021-1320";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0451";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1350,7 +1353,7 @@ function gwFetch(path, opts={}){
       const msg = (location.protocol==='https:' && /^http:/.test(cfg.base||'')) ? 'הדף פתוח ב-HTTPS ולכן הדפדפן חוסם פנייה ל-PDEG ב-HTTP. פתח את האפליקציה מה-PDEG עצמו.' :
         (e.message==='Failed to fetch' || e.name==='TypeError') ? 'אין מענה מה-PDEG ('+(cfg.base||location.host)+').' : e.message;
       logPush('err', msg, path);
-      if(link.fails>=2) setLink('err','אין קשר');
+      if(link.fails>=2 && !useDynet()) setLink('err','אין קשר');   // in DyNet mode the TCP link stands; HTTP errors don't drop it
       throw new Error(msg);
     });
 }
@@ -1505,10 +1508,13 @@ async function connect(){
     if(o && !o.error){
       setLink('on','מחובר');
       logPush('rx', `מחובר ל-PDEG · TCP ${tcpHost()}:${cfg.tcpPort}`);
-      // Opportunistic: pull FW / bus info over HTTP if the PDEG serves it (never fails the link).
-      GW.ident().then(id => GW.bus().catch(()=>null).then(bus => { link.info = { id, bus }; if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); })).catch(()=>{});
-      GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
-      if(route.area!=null) requestArea(P.areas[route.area], true);
+      // In HTTP control mode, opportunistically pull FW / bus / status over the web API.
+      // In DyNet mode we touch no HTTP at all — the link rides purely on TCP.
+      if(!useDynet()){
+        GW.ident().then(id => GW.bus().catch(()=>null).then(bus => { link.info = { id, bus }; if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); })).catch(()=>{});
+        GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
+        if(route.area!=null) requestArea(P.areas[route.area], true);
+      }
       tcpListen();
     } else {
       setLink('err','אין קשר'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort);
@@ -1564,7 +1570,11 @@ setInterval(() => {
   const a = P.areas[route.area]; if(!a) return;
   if(Date.now() - (live[a.id]?.t||0) > 5000) requestArea(a, true);
 }, 6000);
-document.addEventListener('visibilitychange', () => { if(!document.hidden && link.state!=='off') connect(); });
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden || link.state==='off') return;
+  if(link.state==='on' && (cfg.mode==='sim' || tcp.running)) return;   // already connected — don't tear down and redo
+  connect();
+});
 
 /* ───────── routing + render ───────── */
 let route = { tab:'areas', area:null };
@@ -1806,6 +1816,7 @@ function paintCh(ch, v){
   const w = chEl.querySelector('.cwash'); if(w) w.style.opacity = v>0 ? Math.min(0.9, v*0.011) : 0;
 }
 async function requestArea(a, quiet){
+  if(useDynet()) return;   // DyNet mode: levels arrive passively from the bus — no HTTP polling
   if(!isUp()){ if(!quiet) toast('אין קשר ל-PDEG. התחבר בלשונית „פרויקט וחיבור”.'); return; }
   try{
     await GW.getPreset(a.id);
@@ -2125,26 +2136,30 @@ function progressModal(title){
     close(){ ov.remove(); }
   };
 }
-async function flashDevice(duid){
+async function flashDevice(duid, mode){
+  mode = mode==='full' ? 'full' : 'inc';
   const dv = P && P.devices[duid]; if(!dv) return;
   if(!HAS_TCP || cfg.mode!=='pdeg'){ toast('עדכון בקר דורש חיבור ישיר ל-PDEG (אפליקציית אייפון, מצב PDEG).', 6000); return; }
   let base = origDlj; if(!base){ base = await idb.get('dlj'); origDlj = base; }
   if(!base){ toast('צריך את קובץ הפרויקט. פתח אותו שוב מ-Dropbox.', 6000); return; }
   let info, edited;
-  // "עדכן בקר" always does a FULL config download (every managed byte) + reboot, like SB's "Save To Device".
-  try{ edited = await applyProjectEdits(base); info = await DLJ.deviceFullChunks(edited.bytes, duid); }
+  // 'inc' = only the bytes that changed (like SB's incremental Save To Device).
+  // 'full' = every managed byte (a full config download + reboot).
+  try{ edited = await applyProjectEdits(base); info = mode==='full' ? await DLJ.deviceFullChunks(edited.bytes, duid) : await DLJ.deviceFlashChunks(edited.bytes, duid); }
   catch(e){ toast('שגיאה בהכנת הנתונים: '+e.message, 6000); return; }
   if(!info || !info.chunks.length){
-    // No managed content at all → just clear any stale "pending" mark.
-    if(devPending(dv)){
-      try{ const cleaned = await DLJ.clearDeviceDirty(edited.bytes, duid); origDlj = cleaned.bytes.buffer; idb.put('dlj', origDlj); dv.pending=false; P.unsaved=true; persist(); if(route.tab==='devices') renderDevices($('#main')); toast('אין תוכן לכתיבה בבקר — סומן כמעודכן.', 6000); }
-      catch(e){ toast('שגיאה: '+e.message, 6000); }
-    } else toast('אין תוכן לכתיבה בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000);
+    if(mode==='inc') toast(devPending(dv) ? 'אין בתים בודדים שהשתנו — השתמש ב„הורדה מלאה” כדי לשפוך את כל התצורה.' : 'אין שינויים לעדכן בבקר "'+(dv.name||KIND[dv.kind])+'".', 6000);
+    else if(devPending(dv)){ try{ const cleaned = await DLJ.clearDeviceDirty(edited.bytes, duid); origDlj = cleaned.bytes.buffer; idb.put('dlj', origDlj); dv.pending=false; P.unsaved=true; persist(); if(route.tab==='devices') renderDevices($('#main')); toast('אין תוכן לכתיבה בבקר — סומן כמעודכן.', 6000); }catch(e){ toast('שגיאה: '+e.message, 6000); } }
+    else toast('אין תוכן לכתיבה בבקר "'+(dv.name||KIND[dv.kind])+'".', 5000);
     return;
   }
+  const isFull = mode==='full';
   const ok = await confirmModal(
-    `לעדכן את הבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\nתתבצע הורדה מלאה של כל התצורה (${info.dirty} בייטים ב-${info.chunks.length} קטעים) לזיכרון הבקר, והבקר יאותחל.\n\n⚠️ ודא שבדקת את השינויים ב-System Builder. הפעולה משנה את החומרה.`,
-    'כן, עדכן בקר', 'ביטול');
+    (isFull
+      ? `הורדה מלאה לבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\nכל התצורה המנוהלת (${info.dirty} בייטים ב-${info.chunks.length} קטעים) תיכתב לזיכרון הבקר, והבקר יאותחל.`
+      : `לעדכן את הבקר "${dv.name||KIND[dv.kind]}" (Box ${info.box})?\n\n${info.dirty} בייטים ב-${info.chunks.length} קטעים ייכתבו לזיכרון הבקר, והבקר יאותחל.`)
+    + `\n\n⚠️ ודא שבדקת את השינויים ב-System Builder. הפעולה משנה את החומרה.`,
+    isFull ? 'כן, הורד תצורה מלאה' : 'כן, עדכן בקר', 'ביטול');
   if(!ok) return;
   const prog = progressModal(`מעדכן את "${dv.name||KIND[dv.kind]}" (Box ${info.box})`);
   tcp.running = false;                                   // pause live listening — take over the link
@@ -2230,11 +2245,15 @@ function devMatches(dv, q){
 function renderDevices(m){
   const q = (route.devq||'').trim().toLowerCase();
   const counts = {}; P.deviceOrder.forEach(d => { const k=P.devices[d].kind; counts[k]=(counts[k]||0)+1; });
+  const sf = route.devFilter;   // 'online' | 'offline' | null — filter by communication status
   const byLoc = {}, panelByLoc = {};
-  P.deviceOrder.forEach(d => { const dv=P.devices[d]; if(!devMatches(dv, q)) return; const l=dv.location||'ללא מיקום';
+  P.deviceOrder.forEach(d => { const dv=P.devices[d]; if(!devMatches(dv, q)) return;
+    if(sf && statusOf(dv)!==sf) return;
+    const l=dv.location||'ללא מיקום';
     if(dv.kind==='panel') (panelByLoc[l]=panelByLoc[l]||[]).push(dv);
     else (byLoc[l]=byLoc[l]||[]).push(dv); });
   const nat = (x,y) => x.localeCompare(y, 'he', { numeric:true });
+  const byBox = (x,y) => ((x.box==null?1e9:x.box) - (y.box==null?1e9:y.box)) || nat(x.name||'', y.name||'');
   const locs = Object.keys(byLoc).sort(nat);
   const panelLocs = Object.keys(panelByLoc).sort(nat);
   const devHtml = dv => {
@@ -2280,24 +2299,27 @@ function renderDevices(m){
     return `<details class="dev" data-duid="${dv.duid}" ${(q || openDevs.has(dv.duid))?'open':''}><summary class="row"><span class="sdot" data-st="${statusOf(dv)}" data-dk="${esc(devKey(dv)||'')}" title="תקשורת"></span><span class="kind" data-k="${dv.kind}">${KIND[dv.kind]}</span>${pend?'<span class="pendtag" title="יש שינוי בבקר שממתין לשפיכה">ממתין לשפיכה</span>':''}
       <span class="nm"><div>${esc(dv.name || '(ללא שם)')}</div><div class="dmeta">${meta}</div></span></summary>
       ${dv.channels ? `<div class="pchs">${rows.join('')}</div>` : `<div class="pchs"><span></span><span class="muted">${dv.kind==='panel'?'פאנל לחצנים — שולח פריסטים, ללא יציאות עומס.':'ללא יציאות.'}</span><span></span></div>`}
-      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact"><button class="btn ${pend?'primary':''} sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button><span class="muted" style="font-size:11px">${pend?'יש שינוי מוכן לשפיכה · הורדה מלאה':'הורדה מלאה של התצורה לבקר'}</span></div>` : ''}</details>`;
+      ${(HAS_TCP && dv.dcode!=null) ? `<div class="devact">
+        <button class="btn ${pend?'primary':''} sm" data-flash="${dv.duid}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg> עדכן בקר</button>
+        <button class="btn primary sm" data-flashfull="${dv.duid}" title="כותב את כל התצורה"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg> הורדה מלאה</button>
+      </div>` : ''}</details>`;
   };
   const st = Object.values(devStatus); const on = st.filter(s=>s==='online').length, off = st.filter(s=>s==='offline').length;
   m.innerHTML = `${editsBanner()}
     <div class="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <input id="dq" type="search" placeholder="חיפוש בקר, מיקום, Box או ערוץ" value="${esc(route.devq||'')}" autocomplete="off"></div>
     ${CAN_PHYS ? '' : `<div class="banner"><span>שליטה ביציאה בודדת זמינה באפליקציה באייפון (Scriptable + a-Shell).</span></div>`}
-    <section class="card"><h2>תקשורת עם הבקרים<span class="sp"></span><button class="btn" id="stRefresh">בדוק עכשיו</button></h2>
-      <div class="summary" id="stSummary">${st.length ? `<span class="pill"><b>${on}</b> מחוברים</span><span class="pill"><b>${off}</b> לא מגיבים</span>` : `<span class="note">${isUp() ? 'ה-PDEG לא מדווח סטטוס בקרים. הפעל ניטור התקנים בלשונית Metrics של ה-PDEG ב-System Builder.' : 'התחבר ל-PDEG כדי לבדוק תקשורת.'}</span>`}</div>
+    <section class="card"><h2>תקשורת עם הבקרים<span class="sp"></span>${route.devFilter?`<button class="btn sm" id="stClear">הצג הכול</button>`:''}<button class="btn" id="stRefresh">בדוק עכשיו</button></h2>
+      <div class="summary" id="stSummary">${st.length ? `<button class="pill stpill ${route.devFilter==='online'?'on':''}" data-stfilter="online"><span class="sdot" data-st="online"></span><b>${on}</b> מחוברים</button><button class="pill stpill ${route.devFilter==='offline'?'on':''}" data-stfilter="offline"><span class="sdot" data-st="offline"></span><b>${off}</b> לא מגיבים</button><span class="note" style="align-self:center">לחץ כדי לסנן</span>` : `<span class="note">${isUp() ? 'ה-PDEG עדיין לא דיווח סטטוס. לחץ „בדוק עכשיו”, וודא שבמחשב מופעל ניטור ההתקנים (Metrics → Device Online Status) ב-System Builder.' : 'התחבר ל-PDEG כדי לבדוק תקשורת.'}</span>`}</div>
     </section>
     <div class="summary">${Object.entries(counts).sort((x,y)=>KORDER[x[0]]-KORDER[y[0]]).map(([k,n])=>`<span class="pill"><b>${n}</b> ${KIND[k]}</span>`).join('')}</div>
     ${locs.map(loc => {
-      const list = byLoc[loc].slice().sort((x,y)=> (KORDER[x.kind]-KORDER[y.kind]) || nat(x.name,y.name)), k='dev/'+loc;
+      const list = byLoc[loc].slice().sort(byBox), k='dev/'+loc;
       return `<details class="group" data-k="${esc(k)}" ${(q || openFolders.has(k))?'open':''}><summary>${chev}${esc(loc)}<span class="count">${list.length}</span></summary><div class="rows">${list.map(devHtml).join('')}</div></details>`;
     }).join('')}
     ${panelLocs.length ? (()=>{ const pk='dev/@switches', total=panelLocs.reduce((s,l)=>s+panelByLoc[l].length,0);
       return `<details class="group" data-k="${esc(pk)}" ${(q || openFolders.has(pk))?'open':''}><summary>${chev}מפסקים<span class="count">${total}</span></summary>
-        ${panelLocs.map(loc => { const list = panelByLoc[loc].slice().sort((x,y)=>nat(x.name,y.name)), k='dev/@switches/'+loc;
+        ${panelLocs.map(loc => { const list = panelByLoc[loc].slice().sort(byBox), k='dev/@switches/'+loc;
           return `<details class="group" data-k="${esc(k)}" ${(q || openFolders.has(k))?'open':''}><summary>${chev}${esc(loc)}<span class="count">${list.length}</span></summary><div class="rows">${list.map(devHtml).join('')}</div></details>`; }).join('')}
       </details>`; })() : ''}
     ${(!locs.length && !panelLocs.length && q) ? '<div class="empty">לא נמצאו בקרים עבור „'+esc(route.devq)+'”.</div>' : ''}`;
@@ -2315,8 +2337,15 @@ function renderDevices(m){
     sl.addEventListener('change', ()=>{ act(GW.physical(dv, +ch, +sl.value)); });
   });
   m.querySelectorAll('[data-lout]').forEach(t => t.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); const [aid,cid]=t.dataset.lout.split(':').map(Number); act(GW.level(aid, cid, t.getAttribute('aria-checked')!=='true' ? 100 : 0, 0)); }));
-  m.querySelectorAll('[data-flash]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); flashDevice(b.dataset.flash); }));
-  $('#stRefresh').addEventListener('click', () => act(GW.deviceStatus().then(() => renderDevices(m))));
+  m.querySelectorAll('[data-flash]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); flashDevice(b.dataset.flash, 'inc'); }));
+  m.querySelectorAll('[data-flashfull]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); flashDevice(b.dataset.flashfull, 'full'); }));
+  $('#stRefresh').addEventListener('click', async () => {
+    const btn=$('#stRefresh'); if(btn){ btn.disabled=true; btn.textContent='בודק…'; }
+    try{ await GW.deviceStatus(); renderDevices(m); }
+    catch(e){ toast('בדיקת הסטטוס נכשלה: '+e.message, 6000); if(btn){ btn.disabled=false; btn.textContent='בדוק עכשיו'; } }
+  });
+  m.querySelectorAll('[data-stfilter]').forEach(b => b.addEventListener('click', () => { route.devFilter = route.devFilter===b.dataset.stfilter ? null : b.dataset.stfilter; renderDevices(m); }));
+  $('#stClear') && $('#stClear').addEventListener('click', () => { route.devFilter=null; renderDevices(m); });
   for(const a in live) updateLive(+a);
 }
 function refreshDevStatusUI(){ document.querySelectorAll('[data-dk]').forEach(el => { const s = devStatus[el.dataset.dk]; if(s) el.dataset.st = s; }); }
@@ -2613,6 +2642,43 @@ async function dbxSearch(q, backTo){
     const f=$('#dbxq'); if(f){ f.focus(); const v=f.value; f.value=''; f.value=v; }
   }catch(e){ pane.innerHTML = `<div class="note">החיפוש נכשל: ${esc(e.message)}</div>`; }
 }
+/* ───────── Auto-sync the open Dropbox file ─────────
+   Polls the file's rev; when it changes on Dropbox (e.g. saved from System Builder on the PC),
+   reload it automatically — unless there are unsaved local edits, then just notify. */
+let dbxSyncTimer = null, dbxSyncBusy = false;
+function dbxSyncStart(){ if(dbxSyncTimer) return; dbxSyncTimer = setInterval(dbxSyncCheck, 20000); }
+async function dbxSyncCheck(){
+  if(dbxSyncBusy) return;
+  if(!P || !P.source || !P.source.dropbox || !store.get('dbx',null)) return;
+  if(document.querySelector('.modal-ov')) return;            // don't reload during a flash/confirm
+  const ae=document.activeElement; if(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;   // or while typing
+  dbxSyncBusy = true;
+  try{
+    const md = await dbxApi('files/get_metadata', { path:P.source.path||P.source.dropbox });
+    if(md && md.rev && P.source.rev && md.rev !== P.source.rev){
+      if(pendingEditCount() || P.unsaved){
+        toast('הקובץ עודכן במחשב. יש לך שינויים שלא נשמרו — שמור אותם או פתח מחדש כדי לקבל את העדכון.', 8000);
+        P.source.rev = md.rev;   // notify once; don't nag every 20s
+      } else {
+        const tok = await dbxToken();
+        const dr = await xfetch('https://content.dropboxapi.com/2/files/download', { method:'POST', binary:true, headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg': dbxArg({ path: md.path_lower || P.source.dropbox }) } });
+        if(dr.ok){ const buf = await dr.arrayBuffer(); await reloadProject(buf, P.source.name||'project.dlj', { dropbox:P.source.dropbox, path:md.path_lower||P.source.path, rev:md.rev, name:P.source.name }); toast('הקובץ עודכן מ-Dropbox ✅', 5000); }
+      }
+    }
+  }catch(e){}
+  dbxSyncBusy = false;
+}
+/* Reload a project in place, keeping the user roughly where they are (tab + area if it still exists). */
+async function reloadProject(buf, name, source){
+  const p = await DLJ.parseDljBuffer(buf, name);
+  p.source = source; p.unsaved = false;
+  p.edits = p.edits||{}; p.reassign = p.reassign||{}; p.devNames = p.devNames||{}; p.devAC = p.devAC||{};
+  const keep = { tab: route.tab, area: (route.area!=null && p.areas[route.area]) ? route.area : null };
+  P = p; origDlj = buf; openFolders.clear(); openDevs.clear();
+  for(const k in live) delete live[k];
+  store.set('project', P); idb.put('dlj', buf);
+  route = keep; render();
+}
 async function dbxOpenFile(id, name){
   try{
     toast('מוריד '+name+'…');
@@ -2621,7 +2687,9 @@ async function dbxOpenFile(id, name){
     if(!r.ok) throw new Error('ההורדה נכשלה ('+r.status+')');
     const buf = await r.arrayBuffer();
     const p = await DLJ.parseDljBuffer(buf, name);
-    p.source = { dropbox:id }; setProject(p, buf); toast('נטען: '+name);
+    let rev=null, path=id; try{ const md = await dbxApi('files/get_metadata', { path:id }); rev=md.rev; path=md.path_lower||id; }catch(e){}
+    p.source = { dropbox:id, path, rev, name }; setProject(p, buf); toast('נטען: '+name);
+    dbxSyncStart();
   }catch(e){ toast(e.message, 5000); }
 }
 /* Apply all project edits (output names + logical renames) to the in-memory file and
@@ -2654,6 +2722,7 @@ async function dbxSaveProject(id){
     'Dropbox-API-Arg': dbxArg({ path:meta.path_display, mode:{ '.tag':'update', update:meta.rev } }) }, body });
   if(r.status===409) throw new Error('הקובץ ב-Dropbox השתנה מאז שנפתח. פתח אותו מחדש ושנה שוב.');
   if(!r.ok) throw new Error('העלאה נכשלה ('+r.status+')');
+  try{ const j = await r.json(); if(P.source && j && j.rev) P.source.rev = j.rev; }catch(e){}   // remember our own new rev so auto-sync won't re-pull it
   origDlj = (res.changed>0 ? res.bytes.buffer : base); idb.put('dlj', origDlj);
   return { changed: res.changed, uploaded:true };
 }
@@ -2688,6 +2757,7 @@ document.addEventListener('click', e => { const r = e.target.closest('[data-area
   route = { tab: P ? 'areas' : 'setup', area:null };
   render();
   connect();
+  if(P && P.source && P.source.dropbox) dbxSyncStart();   // keep the open file in sync with Dropbox
 })();
 
 </script>
