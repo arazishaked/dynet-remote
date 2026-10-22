@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-0533";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0628";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1245,6 +1245,11 @@ const DyNet = {
     if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · פריסט P${d1+d3*8+1}` };
     if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ${chLabel(area, d1+1)} · ${this.lpct(d3)}%` };
     if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':chLabel(area, d1+1)} → ${this.lpct(d2)}%` };
+    if(op===0x6B){                                   // keypad/integration "fade area to level" — byte5 is a direct 0–100 percent (64→100%, 00→0%)
+      const all = d1===0x00 || d1===0xFF, pct = Math.max(0, Math.min(100, d3));
+      return { hex, kind:'level', area, ch: all?0:d1+1, pct, text:`${an} · ${all?'כל הערוצים':chLabel(area, d1+1)} → ${pct}%` };
+    }
+    if(op===0x83) return { hex, kind:'area', area, text:`${an} · מיזוג → ${d2}` };   // climate ("מיזוג") areas carry a setpoint-style value in byte4
     if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
     return { hex, kind:'other', text:`${an} · פעולה` };
   }
