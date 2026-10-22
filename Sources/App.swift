@@ -25,6 +25,53 @@ enum AuthInbox {
     }
 }
 
+// ───────── Over-the-air UI ─────────
+// The app is a thin native shell; the web UI is hosted on GitHub Pages. Updating the app means
+// replacing one HTML file there — the shell fetches it, caches it for offline use, and reloads.
+// No rebuild, no reinstall. All saved data (Dropbox login, project, settings) lives in the native
+// bridge's Documents store, independent of where the HTML loads from, so updates never lose it.
+enum WebApp {
+    // The hosted UI. Must match the GitHub Pages URL for the repo (Settings → Pages → root of main).
+    static let remote = URL(string: "https://arazishaked.github.io/dynet-remote/index.html")!
+
+    static var cacheFile: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("app.html")
+    }
+
+    // A usable copy must always exist: seed the cache from the HTML bundled at build time on first run.
+    static func seedIfNeeded() {
+        let f = cacheFile
+        if (try? f.checkResourceIsReachable()) == true { return }
+        if let u = Bundle.main.url(forResource: "index", withExtension: "html"),
+           let s = try? String(contentsOf: u, encoding: .utf8) {
+            try? s.write(to: f, atomically: true, encoding: .utf8)
+        }
+    }
+
+    // Show the cached copy (instant, works offline). file:// origin — same as the old bundled load,
+    // and native mode keeps all state in the bridge, so the origin carries no data.
+    static func load(into wv: WKWebView) {
+        seedIfNeeded()
+        let f = cacheFile
+        wv.loadFileURL(f, allowingReadAccessTo: f.deletingLastPathComponent())
+    }
+
+    // Pull the latest HTML from Pages; if it changed, cache it and reload the WebView.
+    static func sync(into wv: WKWebView?) {
+        var req = URLRequest(url: remote)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.timeoutInterval = 12
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            guard let data = data, let html = String(data: data, encoding: .utf8),
+                  html.count > 5000, html.contains("DyNet") else { return }   // sanity: it really is our page
+            let old = (try? String(contentsOf: cacheFile, encoding: .utf8)) ?? ""
+            guard html != old else { return }
+            try? html.write(to: cacheFile, atomically: true, encoding: .utf8)
+            DispatchQueue.main.async { if let wv = wv { load(into: wv) } }
+        }.resume()
+    }
+}
+
 @main
 struct DyNetRemoteApp: App {
     var body: some Scene {
@@ -56,9 +103,9 @@ struct WebHost: UIViewRepresentable {
         context.coordinator.webView = wv
         AuthInbox.webView = wv
 
-        if let url = Bundle.main.url(forResource: "index", withExtension: "html") {
-            wv.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-        }
+        WebApp.load(into: wv)      // cached / bundled copy — instant, offline-capable
+        WebApp.sync(into: wv)      // fetch the latest in the background; reloads only if it changed
+
         // If a deep-link code arrived before the page was ready, deliver it once loaded.
         if let code = AuthInbox.pendingCode {
             AuthInbox.pendingCode = nil

@@ -133,6 +133,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
             } catch { return ["error": "\(error.localizedDescription)"] }
         case "tcpPoll": return link.poll(m["wait"] as? Double ?? 10)
         case "tcpClose": link.close(); return ["ok": true]
+        case "appUpdate": WebApp.sync(into: webView); return ["ok": true]   // re-fetch the hosted UI; reloads if newer
         case "kvset":
             var kv = loadKV()
             let key = m["key"] as? String ?? ""
