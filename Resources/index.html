@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-0628";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0703";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1210,6 +1210,10 @@ const DyNet = {
             : (pr===1?'פריסט 1 · הדלקה':(pr===4?'פריסט 4 · כיבוי':'פריסט '+pr));
           return { hex, kind:'preset2', area, ch, text:`${an}${chTxt} · ${txt}` };
         }
+        if(op===0x01){                                   // area preset recall from a panel → preset number in payload byte b[10]
+          const pr = b[10] || b[9];
+          return { hex, kind:'preset2', area, preset:pr, text:`${an} · פריסט P${pr}` };
+        }
         return { hex, kind:'area', area, ch, text:`${an}${chTxt}` };
       }
       // ── Physical / device addressing ──
@@ -1367,8 +1371,8 @@ function gwFetch(path, opts={}){
       link.fails++;
       const msg = (location.protocol==='https:' && /^http:/.test(cfg.base||'')) ? 'הדף פתוח ב-HTTPS ולכן הדפדפן חוסם פנייה ל-PDEG ב-HTTP. פתח את האפליקציה מה-PDEG עצמו.' :
         (e.message==='Failed to fetch' || e.name==='TypeError') ? 'אין מענה מה-PDEG ('+(cfg.base||location.host)+').' : e.message;
-      logPush('err', msg, path);
-      if(link.fails>=2 && !useDynet()) setLink('err','אין קשר');   // in DyNet mode the TCP link stands; HTTP errors don't drop it
+      if(!opts.quiet) logPush('err', msg, path);
+      if(link.fails>=2 && !useDynet() && !opts.quiet) setLink('err','אין קשר');   // in DyNet mode the TCP link stands; HTTP errors don't drop it
       throw new Error(msg);
     });
 }
@@ -1395,18 +1399,39 @@ function dynet2AreaLevel(area, ch /*1-based*/, pct, fadeMs){
   const payload = [0x02, 0x00, ch&0xff, level&0xff, 0x00, 0x00, (f>>8)&0xff, f&0xff, 0x00];
   return DyNet2.frame(0x10, 0xDC, 0x003D, 0x00, ((area&0xff)<<8)|0xFF, payload);
 }
+/* Field confirmation ("תשובה"): after a command we read the real level/preset back from the
+   PDEG and echo it as an RX line. Debounced; silent (quiet) so an unreachable PDEG — e.g. an
+   external IP with no HTTP forwarded — produces no error and simply gives no confirmation. */
+let confTimer=null, confOff=false, confBase='';
+function confirmField(a, c){
+  if(cfg.mode!=='pdeg') return;
+  if(confBase!==cfg.base){ confBase=cfg.base; confOff=false; }   // new gateway → try again
+  if(confOff) return;
+  clearTimeout(confTimer);
+  confTimer = setTimeout(async () => {
+    try{
+      if(c && c!==0){
+        const t = await gwFetch(`/GetDyNet.cgi?a=${a}&c=${c}&_=${Date.now()}`, { quiet:true });
+        const v = num(t); if(!isNaN(v)){ logPush('rx', `${areaLabel(a)} · ${chLabel(a, c)} · ${v}% ✓`, t); setLive(a, { level:[c,v] }); }
+      } else {
+        const t = await gwFetch(`/GetDyNet.cgi?a=${a}&_=${Date.now()}`, { quiet:true });
+        const p = num(t); if(!isNaN(p)){ logPush('rx', `${areaLabel(a)} · פריסט נוכחי P${p} ✓`, t); setLive(a, { preset:p }); }
+      }
+    }catch(e){ confOff = true; }   // HTTP not reachable here → stop confirming, stay silent
+  }, 350);
+}
 const GW = {
   async preset(a, p, fade){
     // Presets stay on the (working) web API until a bus capture confirms the recall frame.
     await gwFetch(`/SetDyNet.cgi?a=${a}&p=${p}&f=${fade}&_=${Date.now()}`);
     logPush('tx', `${areaLabel(a)} · פריסט P${p} · דעיכה ${fade} ש׳`);
-    setLive(a, { preset:p });
+    setLive(a, { preset:p }); confirmField(a, 0);
   },
   async level(a, c, pct, fade){
-    if(useDynet()){ await this.levelDynet(a, c, pct, fade); setLive(a, { level:[c,pct] }); return; }
+    if(useDynet()){ await this.levelDynet(a, c, pct, fade); setLive(a, { level:[c,pct] }); confirmField(a, c); return; }
     await gwFetch(`/SetDyNet.cgi?a=${a}&c=${c}&l=${pct}&f=${fade}&j=255`);
     logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a, c)} → ${pct}%`);
-    setLive(a, { level:[c,pct] });
+    setLive(a, { level:[c,pct] }); confirmField(a, c);
   },
   /* Set an area/channel over DyNet, in the dialect auto-detected from the bus.
      DyNet1 → one 0x1C message; DyNet2 (or unknown) → op 0x10 per channel, plus a DyNet1
@@ -1527,7 +1552,7 @@ async function connect(){
       if(was!=='on') logPush('rx', `מחובר ל-PDEG · TCP ${tcpHost()}:${cfg.tcpPort}`);   // log only on a real (re)connect
       // No automatic HTTP: the native app rides purely on TCP. Device status is fetched only when
       // the user taps "בדוק עכשיו"; FW/bus info loads when the Settings tab opens (HTTP mode only).
-      if(!useDynet() && route.area!=null) requestArea(P.areas[route.area], true);
+      if(route.area!=null) requestArea(P.areas[route.area], true);   // silently refresh the open room on (re)connect
       tcpListen();
     } else {
       setLink('err','אין קשר'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort);
@@ -1828,13 +1853,23 @@ function paintCh(ch, v){
   else { chEl.removeAttribute('data-lit'); chEl.setAttribute('data-off',''); }
   const w = chEl.querySelector('.cwash'); if(w) w.style.opacity = v>0 ? Math.min(0.9, v*0.011) : 0;
 }
+/* Read the whole room's state back from the PDEG — SILENTLY (updates the sliders/ring to the
+   real field values, no log lines). Runs on entering a room, after a command, and periodically.
+   Shares confOff with confirmField: if HTTP isn't reachable here (e.g. an external IP with only
+   TCP 95 forwarded) it stops quietly after one miss and the UI then rides on controller reports. */
 async function requestArea(a, quiet){
-  if(useDynet()) return;   // DyNet mode: levels arrive passively from the bus — no HTTP polling
+  if(cfg.mode!=='pdeg' && cfg.mode!=='sim') return;
   if(!isUp()){ if(!quiet) toast('אין קשר ל-PDEG. התחבר בלשונית „פרויקט וחיבור”.'); return; }
+  if(confBase!==cfg.base){ confBase=cfg.base; confOff=false; }
+  if(confOff) return;                                 // HTTP dead here → stay silent, rely on bus reports
   try{
-    await GW.getPreset(a.id);
-    for(const ch of a.channels) await GW.getLevel(a.id, ch.id);
-  }catch(e){ if(!quiet) toast(e.message, 4500); }
+    const pt = await gwFetch(`/GetDyNet.cgi?a=${a.id}&_=${Date.now()}`, { quiet:true });
+    const p = num(pt); if(!isNaN(p)) setLive(a.id, { preset:p });
+    for(const ch of a.channels){
+      const t = await gwFetch(`/GetDyNet.cgi?a=${a.id}&c=${ch.id}&_=${Date.now()}`, { quiet:true });
+      const v = num(t); if(!isNaN(v)) setLive(a.id, { level:[ch.id, v] });
+    }
+  }catch(e){ confOff = true; }                        // stop silently; controller reports still refresh the UI
 }
 function updateLive(id){
   const L = live[id];
