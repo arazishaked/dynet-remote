@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-0451";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0508";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1223,10 +1223,11 @@ const DyNet = {
       return { hex, kind:'dynet2', text:`${act} · ${who}` };
     }
     if(b[0]===0x5C){
+      if(b[1]===0xDC && b[3]!==0x92) return { hex, skip:true };   // gateway heartbeat/sync — not a controller command
       const dv = P && P.deviceOrder.map(d=>P.devices[d]).find(d=>d.dcode===b[1] && d.box===b[2]);
-      const who = dv ? `${dv.name||KIND[dv.kind]}${dv.location?' · '+dv.location:''}` : `בקר ${b[2]}`;
+      const who = dv ? `${dv.name||KIND[dv.kind]} · ${dv.location||('Box '+dv.box)}` : `בקר ${b[2]}`;
       if(b[3]===0x92) return { hex, kind:'phys', dv, ch:b[4], pct:Math.round(b[5]/2.54), text:`${who} · יציאה ${b[4]} → ${Math.round(b[5]/2.54)}%` };
-      return { hex, kind:'phys?', dv, text:`${who} · פעולה פיזית` };
+      return { hex, kind:'phys?', dv, text:`${who} · פעולה` };
     }
     if(b[0]!==0x1C) return { hex, kind:'other', text:'הודעה ברשת' };
     const area=b[1], d1=b[2], op=b[3], d2=b[4], d3=b[5], an=areaLabel(area);
@@ -1430,7 +1431,7 @@ const GW = {
         if(!r || r.error){ logPush('err', 'הקיצור "'+(cfg.shortcutName||'Dynet Send')+'" לא רץ: '+((r&&r.error)||''), hexs); throw new Error('הקיצור DyNet Send לא רץ. בדוק שהוא קיים בקיצורים.'); }
       }
       if(!r || r.error){ logPush('err', 'שליחה ב-TCP נכשלה: '+((r&&r.error)||''), tcpHost()+':'+cfg.tcpPort); throw new Error('אין חיבור TCP ל-PDEG ('+tcpHost()+':'+cfg.tcpPort+').'); }
-      logPush('tx', `${dv.name||KIND[dv.kind]} · Box ${dv.box} · יציאה ${ch} → ${pct}%`, Array.from(fr, hex2).join(' '));
+      logPush('tx', `${dv.name||KIND[dv.kind]} · ${devPlace(dv)} · יציאה ${ch} → ${pct}%`, Array.from(fr, hex2).join(' '));
     }
     setOut(dv.duid, ch, pct);
     cfg.lastOut = { duid:dv.duid, ch }; saveCfg();
@@ -1466,6 +1467,7 @@ const GW = {
 };
 function areaLabel(id){ const a=P&&P.areas[id]; return a && a.name ? `${a.name} (${id})` : 'אזור '+id; }
 function chLabel(area, cn){ if(!cn) return ''; const c = P && findCh(area, cn); return c ? chName(c) : 'ערוץ '+cn; }
+const devPlace = dv => (dv && dv.location) ? dv.location : ('Box '+(dv?dv.box:'?'));   // the controller's board/location, not its box number
 function setLive(a, u){
   const L = live[a] = live[a] || { preset:null, levels:{} };
   if(u.preset!=null) L.preset = u.preset;
@@ -1506,15 +1508,12 @@ async function connect(){
   if(HAS_TCP && cfg.mode==='pdeg'){
     const o = await native({ kind:'tcpOpen', host:tcpHost(), port:cfg.tcpPort });
     if(o && !o.error){
+      const was = link.state;
       setLink('on','מחובר');
-      logPush('rx', `מחובר ל-PDEG · TCP ${tcpHost()}:${cfg.tcpPort}`);
-      // In HTTP control mode, opportunistically pull FW / bus / status over the web API.
-      // In DyNet mode we touch no HTTP at all — the link rides purely on TCP.
-      if(!useDynet()){
-        GW.ident().then(id => GW.bus().catch(()=>null).then(bus => { link.info = { id, bus }; if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); })).catch(()=>{});
-        GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
-        if(route.area!=null) requestArea(P.areas[route.area], true);
-      }
+      if(was!=='on') logPush('rx', `מחובר ל-PDEG · TCP ${tcpHost()}:${cfg.tcpPort}`);   // log only on a real (re)connect
+      // No automatic HTTP: the native app rides purely on TCP. Device status is fetched only when
+      // the user taps "בדוק עכשיו"; FW/bus info loads when the Settings tab opens (HTTP mode only).
+      if(!useDynet() && route.area!=null) requestArea(P.areas[route.area], true);
       tcpListen();
     } else {
       setLink('err','אין קשר'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort);
