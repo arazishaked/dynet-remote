@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-0508";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0533";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1200,6 +1200,15 @@ const DyNet = {
         if(op===0x10){                                   // fade/set channel → target level in byte 12
           const pct=Math.min(100, Math.round(b[12]/2.55));
           return { hex, kind:'level', area, ch, pct, text:`${an}${chTxt} · ${pct}%` };
+        }
+        if(op===0x11){                                   // recall preset for a channel → preset number in byte 13
+          const pr=b[13], c=ch?findCh(area,ch):null;
+          // dimmer: preset 1 = on (100%), 4 = off (0%); switch: preset number + on/off
+          const dim = c && !isSwitch(c);
+          const txt = dim
+            ? (pr===1?'הדלקה · 100%':(pr===4?'כיבוי · 0%':'פריסט '+pr))
+            : (pr===1?'פריסט 1 · הדלקה':(pr===4?'פריסט 4 · כיבוי':'פריסט '+pr));
+          return { hex, kind:'preset2', area, ch, text:`${an}${chTxt} · ${txt}` };
         }
         return { hex, kind:'area', area, ch, text:`${an}${chTxt}` };
       }
