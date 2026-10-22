@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-1046";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-1113";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1430,9 +1430,10 @@ const GW = {
     // Presets stay on the (working) web API until a bus capture confirms the recall frame.
     await gwFetch(`/SetDyNet.cgi?a=${a}&p=${p}&f=${fade}&_=${Date.now()}`);
     logPush('tx', `${areaLabel(a)} · פריסט P${p} · דעיכה ${fade} ש׳`);
-    setLive(a, { preset:p }); confirmField(a, 0);
+    setLive(a, { preset:p }); markTouched(a, 0); confirmField(a, 0);
   },
   async level(a, c, pct, fade){
+    markTouched(a, c);
     if(useDynet()){ await this.levelDynet(a, c, pct, fade); setLive(a, { level:[c,pct] }); return; }   // no read-back: the slider rides on the command + bus reports, so it isn't snapped back
     await gwFetch(`/SetDyNet.cgi?a=${a}&c=${c}&l=${pct}&f=${fade}&j=255`);
     logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a, c)} → ${pct}%`);
@@ -1617,9 +1618,14 @@ async function tcpListen(){
 function isUp(){ return link.state==='on' || link.state==='sim'; }
 function act(promise){ return promise.catch(e => toast(e.message, 4500)); }
 
-/* No timed polling: live changes arrive from the bus (controller reports / wall switches),
-   and the room's state is read once on first entry (see renderArea). Continuous polling fought
-   the user's own commands, so it's gone. */
+/* Keep the open room in sync with the field. On sites whose PDEG doesn't stream bus traffic to the
+   app over TCP, this HTTP read is the only way switch/System-Builder changes show up. It's silent,
+   skips channels the user just touched (markTouched), and stops itself on sites where HTTP isn't
+   reachable (confOff) — so it never fights control and never spams errors. */
+setInterval(() => {
+  if(document.hidden || !isUp() || route.area==null || !P || cfg.mode!=='pdeg') return;
+  requestArea(P.areas[route.area], true);
+}, 3000);
 document.addEventListener('visibilitychange', () => {
   if(document.hidden || link.state==='off') return;
   if(link.state==='on' && (cfg.mode==='sim' || tcp.running)) return;   // already connected — don't tear down and redo
@@ -1881,10 +1887,15 @@ async function requestArea(a, quiet){
     const p = num(pt); if(!isNaN(p)) setLive(a.id, { preset:p });
     for(const ch of a.channels){
       const t = await gwFetch(`/GetDyNet.cgi?a=${a.id}&c=${ch.id}&_=${Date.now()}`, { quiet:true });
-      const v = num(t); if(!isNaN(v)) setLive(a.id, { level:[ch.id, v] });
+      const v = num(t);
+      // Don't overwrite a channel the user just set (its field level may still be fading) — avoids the "snaps back" feel.
+      if(!isNaN(v) && Date.now()-(touched[a.id+':'+ch.id]||0) > 3000) setLive(a.id, { level:[ch.id, v] });
     }
   }catch(e){ confOff = true; }                        // stop silently; controller reports still refresh the UI
 }
+// Channels the user just drove, so periodic reads don't fight a command mid-fade.
+const touched = {};
+function markTouched(a, c){ const t=Date.now(), ar=P&&P.areas[a]; if((c===0||c===255)&&ar){ ar.channels.forEach(x=>touched[a+':'+x.id]=t); } else touched[a+':'+c]=t; }
 function updateLive(id){
   const L = live[id];
   document.querySelectorAll(`[data-live-preset="${id}"]`).forEach(el => { if(L && L.preset){ el.hidden=false; el.textContent='P'+L.preset; } });
