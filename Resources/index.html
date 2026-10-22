@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-0726";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1022-0939";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1327,7 +1327,7 @@ function FrameReader(onFrame){
 function setProject(p, buf){
   P = p; origDlj = buf || null;
   P.unsaved = false;                        // freshly loaded file has nothing unsaved yet
-  openFolders.clear(); openDevs.clear();   // new project opens fully collapsed
+  openFolders.clear(); openDevs.clear(); checkedAreas.clear(); lastArea = null;   // new project opens fully collapsed
   // Auto-target the gateway IP stored in the project (if any), so each project
   // connects to its own PDEG without the user retyping the address.
   if(p.conn && p.conn.ip){
@@ -1429,7 +1429,7 @@ const GW = {
     setLive(a, { preset:p }); confirmField(a, 0);
   },
   async level(a, c, pct, fade){
-    if(useDynet()){ await this.levelDynet(a, c, pct, fade); setLive(a, { level:[c,pct] }); confirmField(a, c); return; }
+    if(useDynet()){ await this.levelDynet(a, c, pct, fade); setLive(a, { level:[c,pct] }); return; }   // no read-back: the slider rides on the command + bus reports, so it isn't snapped back
     await gwFetch(`/SetDyNet.cgi?a=${a}&c=${c}&l=${pct}&f=${fade}&j=255`);
     logPush('tx', `${areaLabel(a)} · ${c===0?'כל הערוצים':chLabel(a, c)} → ${pct}%`);
     setLive(a, { level:[c,pct] }); confirmField(a, c);
@@ -1610,12 +1610,9 @@ async function tcpListen(){
 function isUp(){ return link.state==='on' || link.state==='sim'; }
 function act(promise){ return promise.catch(e => toast(e.message, 4500)); }
 
-/* Light polling of the open area so wall-switch changes show up */
-setInterval(() => {
-  if(document.hidden || !isUp() || route.area==null || !P) return;
-  const a = P.areas[route.area]; if(!a) return;
-  if(Date.now() - (live[a.id]?.t||0) > 5000) requestArea(a, true);
-}, 6000);
+/* No timed polling: live changes arrive from the bus (controller reports / wall switches),
+   and the room's state is read once on first entry (see renderArea). Continuous polling fought
+   the user's own commands, so it's gone. */
 document.addEventListener('visibilitychange', () => {
   if(document.hidden || link.state==='off') return;
   if(link.state==='on' && (cfg.mode==='sim' || tcp.running)) return;   // already connected — don't tear down and redo
@@ -1628,7 +1625,9 @@ let areaScope = 'all';   // ring target in the area view: 'all' or a channel id
 let dbxAwaitingCode = false;
 const openFolders = new Set();   // always start collapsed on app open (not persisted)
 const openDevs = new Set();
-function go(r){ if(r.tab!=='setup') dbxAwaitingCode = false; route = Object.assign({ area:null }, r); render(); window.scrollTo(0,0); }
+const checkedAreas = new Set();  // rooms whose state we already read once (first-entry status check)
+let lastArea = null;             // last room opened, so leaving Areas and returning reopens it
+function go(r){ if(r.tab!=='setup') dbxAwaitingCode = false; route = Object.assign({ area:null }, r); if(route.tab==='areas' && route.area!=null) lastArea = route.area; render(); window.scrollTo(0,0); }
 
 function render(){
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab===route.tab ? 'page' : 'false'));
@@ -1849,10 +1848,10 @@ function renderArea(m, a){
     ring.addEventListener('pointerup', end);
     ring.addEventListener('pointercancel', () => { active=false; delete ring.dataset.drag; });
   }
-  $('#refresh', m) && $('#refresh', m).addEventListener('click', () => requestArea(a));
+  $('#refresh', m) && $('#refresh', m).addEventListener('click', () => { checkedAreas.delete(a.id); requestArea(a); });
   updateLive(a.id);
   syncMaster();
-  if(isUp()) requestArea(a, true);
+  if(isUp() && !checkedAreas.has(a.id)){ checkedAreas.add(a.id); requestArea(a, true); }   // read the room's real state once, on first entry
 }
 /* paint one channel row for a brightness level */
 function paintCh(ch, v){
@@ -2730,7 +2729,7 @@ async function reloadProject(buf, name, source){
   p.source = source; p.unsaved = false;
   p.edits = p.edits||{}; p.reassign = p.reassign||{}; p.devNames = p.devNames||{}; p.devAC = p.devAC||{};
   const keep = { tab: route.tab, area: (route.area!=null && p.areas[route.area]) ? route.area : null };
-  P = p; origDlj = buf; openFolders.clear(); openDevs.clear();
+  P = p; origDlj = buf; openFolders.clear(); openDevs.clear(); checkedAreas.clear();   // refreshed file → re-read room state on next entry
   for(const k in live) delete live[k];
   store.set('project', P); idb.put('dlj', buf);
   route = keep; render();
@@ -2801,8 +2800,8 @@ async function dbxSaveAs(name){
 }
 
 /* ───────── boot ───────── */
-document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => go({ tab:b.dataset.tab })));
-$('#backBtn').addEventListener('click', () => go({ tab:'areas' }));
+document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab==='areas' ? { tab:'areas', area:lastArea } : { tab:b.dataset.tab })));
+$('#backBtn').addEventListener('click', () => { lastArea = null; go({ tab:'areas', area:null }); });   // back = out to the room list
 $('#linkChip').addEventListener('click', () => go({ tab:'setup' }));
 document.addEventListener('click', e => { const r = e.target.closest('[data-area]'); if(r && route.area==null) go({ tab:'areas', area:+r.dataset.area }); });
 
