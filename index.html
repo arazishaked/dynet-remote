@@ -1039,7 +1039,7 @@ if (typeof module !== 'undefined') module.exports = DLJ;
 </script>
 <script>
 "use strict";
-const BUILD_ID = "1022-1136";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1025-1330";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1248,7 +1248,7 @@ const DyNet = {
     if(op<=3 || (op>=0x0A && op<=0x0D)){ const p=d3*8+(op<=3?op:op-6)+1; return { hex, kind:'preset', area, preset:p, text:`${an} · פריסט P${p}` }; }
     if(op===0x04) return { hex, kind:'preset', area, preset:4, text:`${an} · כיבוי` };
     if(op===0x62) return { hex, kind:'preset', area, preset:d1+d3*8+1, text:`${an} · פריסט P${d1+d3*8+1}` };
-    if(op===0x60) return { hex, kind:'level', area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ${chLabel(area, d1+1)} · ${this.lpct(d3)}%` };
+    if(op===0x60) return { hex, kind:'level', report:true, area, ch:d1+1, pct:this.lpct(d3), text:`${an} · ${chLabel(area, d1+1)} · ${this.lpct(d3)}%` };
     if(op>=0x71 && op<=0x73) return { hex, kind:'level', area, ch:d1===0xFF?0:d1+1, pct:this.lpct(d2), text:`${an} · ${d1===0xFF?'כל הערוצים':chLabel(area, d1+1)} → ${this.lpct(d2)}%` };
     if(op===0x6B){                                   // "fade channel to preset" — byte4 = preset (0→P1 'High'/on, 3→P4 'Off'), byte5 = FADE TIME (not a level!)
       const pr = d2 + 1, ch = d1===0xFF ? 0 : d1+1, c = ch ? findCh(area, ch) : null, dim = c && !isSwitch(c);
@@ -1261,8 +1261,12 @@ const DyNet = {
       return { hex, kind:'level', area, ch, pct, text:`${an} · ${chLabel(area, ch)} → ${pct}%` };
     }
     if(op===0x83) return { hex, kind:'area', area, text:`${an} · מיזוג → ${d2}` };   // climate ("מיזוג") areas: byte2 is 0x00, a setpoint value sits in byte4
-    if(op===0x61 || op===0x63) return { hex, kind:'req', text:`${an} · בקשת מצב` };
-    return { hex, kind:'other', text:`${an} · פעולה` };
+    if(op===0x61 || op===0x63) return { hex, skip:true };           // status requests — background noise, never shown
+    if(op===0x65) return { hex, kind:'area', area, text:`${an} · פאניקה` };
+    if(op===0x66) return { hex, kind:'area', area, text:`${an} · ביטול פאניקה` };
+    // Unrecognised DyNet1 action in a room (e.g. hold-to-dim / stop-fade from a wall switch): show it as a level change
+    // and let the app read the room's real levels once things settle (see settleSync).
+    return { hex, kind:'unk1', area, text:`${an} · שינוי עוצמה` };
   }
 };
 /* ───────── DyNet2 device-memory protocol (controller flashing / "Save To Device") ─────────
@@ -1569,7 +1573,7 @@ async function connect(){
       if(was!=='on') logPush('rx', `מחובר ל-PDEG · TCP ${tcpHost()}:${cfg.tcpPort}`);   // log only on a real (re)connect
       // No automatic HTTP: the native app rides purely on TCP. Device status is fetched only when
       // the user taps "בדוק עכשיו"; FW/bus info loads when the Settings tab opens (HTTP mode only).
-      if(route.area!=null) requestArea(P.areas[route.area], true);   // silently refresh the open room on (re)connect
+      if(route.area!=null) syncArea(P.areas[route.area]);   // silently refresh the open room on (re)connect
       tcpListen();
     } else {
       setLink('err','אין קשר'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort);
@@ -1586,27 +1590,73 @@ async function connect(){
     logPush('rx', `PDEG ${id.IPv4Addr||''} · FW ${id.FirmwareVersion||''}${bus?' · אפיק DyNet '+bus.Voltage+'V':''}`);
     GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
     if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main'));
-    if(route.area!=null) requestArea(P.areas[route.area], true);
+    if(route.area!=null) syncArea(P.areas[route.area]);
   }catch(e){ setLink('err','אין קשר'); if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); }
 }
 /* Live DyNet traffic from the PDEG: wall switches, other apps, System Builder */
 const tcp = { running:false, state:'off' };
+const lastBus = {};                 // area → last time a bus frame for it arrived
+let syncJob = null, syncQuiet = null;   // one silent room-sync at a time; replies to OUR requests aren't logged
 const rxFrame = FrameReader(fr => {
   noteBusProto(fr);                                  // learn DyNet1 vs DyNet2 from live traffic
   const d = DyNet.decode(fr);
   if(d.skip) return;                                 // PDEG housekeeping — don't clutter the log
-  logPush('rx', d.text, d.hex);
+  const quiet = !!(d.report && d.area!=null && syncQuiet && syncQuiet.area===d.area && Date.now()<syncQuiet.until);
+  if(quiet && syncJob) syncJob.got++;
+  if(!quiet) logPush('rx', d.text, d.hex);
   // Reflect EVERY field action — wall switch, System Builder, another app — in the Areas & Devices
   // views, not only commands we sent ourselves. (d.ch===0/undefined ⇒ the whole area.)
   if(d.area!=null){
+    if(!quiet) lastBus[d.area] = Date.now();
+    if(!quiet) checkedAreas.delete(d.area);          // room changed in the field → re-read it next time it is opened
     if(d.kind==='level') setLive(d.area, { level:[d.ch||0, d.pct] });
     else if(d.kind==='preset'){ setLive(d.area, { preset:d.preset });
       if(d.preset===1) setLive(d.area, { level:[0,100] }); else if(d.preset===4) setLive(d.area, { level:[0,0] }); }
     else if(d.kind==='preset2'){ if(d.preset!=null) setLive(d.area, { preset:d.preset });
       if(d.pct!=null) setLive(d.area, { level:[d.ch||0, d.pct] }); }
+    // Levels we can't derive from the frame itself (hold-to-dim, stop-fade, scene presets…): read them once, after it settles.
+    if(!quiet && busProto==='dynet1' && (d.kind==='unk1' || d.kind==='area' || d.kind==='preset' && d.preset!==1 && d.preset!==4 || d.kind==='preset2' && d.pct==null)) settleSync(d.area);
   }
   if(d.kind==='phys' && d.dv) setOut(d.dv.duid, d.ch, d.pct);
 });
+/* Settle-then-read: bursts of bus frames (a long press on a dimmer sends several) are coalesced; ~0.9 s after the
+   LAST one, and only for the room that's open, we read the real levels ONCE. No timers, no polling. */
+const settleTimers = {};
+const isDragging = () => !!document.querySelector('[data-drag="1"]');
+function settleSync(area){
+  if(route.area!==area) return;
+  clearTimeout(settleTimers[area]);
+  settleTimers[area] = setTimeout(function again(){
+    if(route.area!==area || !P || !P.areas[area]) return;
+    if(isDragging() || syncJob){ settleTimers[area] = setTimeout(again, 600); return; }
+    syncArea(P.areas[area], { log:true });
+  }, 900);
+}
+/* Read a room's real state. DyNet1 over TCP → standard "request channel level" (0x61, read-only) per channel, replies
+   (0x60) are applied silently; if none come back (the PDEG doesn't stream bus traffic to us on this site) fall back to
+   the HTTP read. Everything else → HTTP read. With opt.log, only the channels that actually changed are written to the log. */
+async function syncArea(a, opt){
+  opt = opt || {};
+  if(!P || !a || !isUp() || syncJob) return;
+  const before = Object.assign({}, (live[a.id]||{}).levels);
+  syncJob = { area:a.id, got:0 }; syncQuiet = { area:a.id, until:Date.now()+3500 };
+  try{
+    if(useDynet() && busProto==='dynet1' && HAS_TCP){
+      for(const ch of a.channels){ await GW.sendRaw(DyNet.frame([0x1C, a.id&0xFF, (ch.id-1)&0xFF, 0x61, 0, 0, 0xFF])); await sleep(40); }
+      await sleep(800);
+      if(syncJob.got===0) await requestArea(a, true);
+    } else {
+      await requestArea(a, true);
+    }
+  }catch(e){}
+  syncQuiet = null; syncJob = null;
+  if(opt.log){
+    const now = (live[a.id]||{}).levels || {};
+    for(const ch of a.channels){
+      if(now[ch.id]!=null && before[ch.id]!=null && now[ch.id]!==before[ch.id]) logPush('rx', `${areaLabel(a.id)} · ${chLabel(a.id, ch.id)} · ${isSwitch(ch) ? (now[ch.id]>0?'הדלקה':'כיבוי') : now[ch.id]+'%'}`);
+    }
+  }
+}
 function setTcp(s){ tcp.state = s; const el = $('#tcpState'); if(el) el.textContent = { on:'מחובר', off:'לא מחובר', err:'אין חיבור' }[s] || s; }
 async function tcpListen(){
   if(tcp.running) return; tcp.running = true;
@@ -1626,14 +1676,7 @@ async function tcpListen(){
 function isUp(){ return link.state==='on' || link.state==='sim'; }
 function act(promise){ return promise.catch(e => toast(e.message, 4500)); }
 
-/* Keep the open room in sync with the field. On sites whose PDEG doesn't stream bus traffic to the
-   app over TCP, this HTTP read is the only way switch/System-Builder changes show up. It's silent,
-   skips channels the user just touched (markTouched), and stops itself on sites where HTTP isn't
-   reachable (confOff) — so it never fights control and never spams errors. */
-setInterval(() => {
-  if(document.hidden || !isUp() || route.area==null || !P || cfg.mode!=='pdeg') return;
-  requestArea(P.areas[route.area], true);
-}, 3000);
+/* No timed polling at all: the open room is read once on entry, and again only after a field action on it settles (settleSync). */
 document.addEventListener('visibilitychange', () => {
   if(document.hidden || link.state==='off') return;
   if(link.state==='on' && (cfg.mode==='sim' || tcp.running)) return;   // already connected — don't tear down and redo
@@ -1869,10 +1912,10 @@ function renderArea(m, a){
     ring.addEventListener('pointerup', end);
     ring.addEventListener('pointercancel', () => { active=false; delete ring.dataset.drag; });
   }
-  $('#refresh', m) && $('#refresh', m).addEventListener('click', () => { checkedAreas.delete(a.id); requestArea(a); });
+  $('#refresh', m) && $('#refresh', m).addEventListener('click', () => { checkedAreas.delete(a.id); syncArea(a, { log:true }); });
   updateLive(a.id);
   syncMaster();
-  if(isUp() && !checkedAreas.has(a.id)){ checkedAreas.add(a.id); requestArea(a, true); }   // read the room's real state once, on first entry
+  if(isUp() && !checkedAreas.has(a.id)){ checkedAreas.add(a.id); syncArea(a); }   // read the room's real state once, on first entry
 }
 /* paint one channel row for a brightness level */
 function paintCh(ch, v){
@@ -1890,14 +1933,16 @@ async function requestArea(a, quiet){
   if(!isUp()){ if(!quiet) toast('אין קשר ל-PDEG. התחבר בלשונית „פרויקט וחיבור”.'); return; }
   if(confBase!==cfg.base){ confBase=cfg.base; confOff=false; }
   if(confOff) return;                                 // HTTP dead here → stay silent, rely on bus reports
+  const t0 = Date.now();
+  const stale = () => isDragging() || (lastBus[a.id]||0) > t0;   // a finger is on a control, or the bus spoke meanwhile → this read is out of date
   try{
     const pt = await gwFetch(`/GetDyNet.cgi?a=${a.id}&_=${Date.now()}`, { quiet:true });
-    const p = num(pt); if(!isNaN(p)) setLive(a.id, { preset:p });
+    const p = num(pt); if(!isNaN(p) && !stale()) setLive(a.id, { preset:p });
     for(const ch of a.channels){
       const t = await gwFetch(`/GetDyNet.cgi?a=${a.id}&c=${ch.id}&_=${Date.now()}`, { quiet:true });
       const v = num(t);
       // Don't overwrite a channel the user just set (its field level may still be fading) — avoids the "snaps back" feel.
-      if(!isNaN(v) && Date.now()-(touched[a.id+':'+ch.id]||0) > 3000) setLive(a.id, { level:[ch.id, v] });
+      if(!isNaN(v) && !stale() && Date.now()-(touched[a.id+':'+ch.id]||0) > 3000) setLive(a.id, { level:[ch.id, v] });
     }
   }catch(e){ confOff = true; }                        // stop silently; controller reports still refresh the UI
 }
