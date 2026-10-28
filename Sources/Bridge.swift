@@ -3,7 +3,7 @@ import Network
 import UIKit
 import WebKit
 import UniformTypeIdentifiers
-
+ 
 // Persistent raw-TCP link to the PDEG (physical DyNet frames + live bus traffic).
 final class DyNetLink {
     private var conn: NWConnection?
@@ -13,7 +13,7 @@ final class DyNetLink {
     private var buf = Data()
     private let lock = NSLock()
     private let q = DispatchQueue(label: "dynet.tcp")
-
+ 
     @discardableResult
     func open(_ h: String, _ p: UInt16) -> Bool {
         lock.lock(); let same = connected && h == host && p == port; lock.unlock()
@@ -40,7 +40,7 @@ final class DyNetLink {
         _ = sem.wait(timeout: .now() + 5)
         return ok
     }
-
+ 
     private func receive(_ c: NWConnection) {
         c.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, isComplete, err in
             guard let self = self else { return }
@@ -54,7 +54,7 @@ final class DyNetLink {
             self.receive(c)
         }
     }
-
+ 
     func send(_ data: Data, _ h: String, _ p: UInt16) throws {
         if !open(h, p) { throw NSError(domain: "tcp", code: 1, userInfo: [NSLocalizedDescriptionKey: "no connection"]) }
         let sem = DispatchSemaphore(value: 0)
@@ -63,7 +63,7 @@ final class DyNetLink {
         _ = sem.wait(timeout: .now() + 3)
         if let e = sendErr { throw e }
     }
-
+ 
     func poll(_ wait: Double) -> [String: Any] {
         let end = Date().addingTimeInterval(wait)
         while Date() < end {
@@ -74,22 +74,23 @@ final class DyNetLink {
         lock.lock(); let out = buf; buf = Data(); let con = connected; lock.unlock()
         return ["b64": out.base64EncodedString(), "state": con ? "on" : "off"]
     }
-
+ 
     func close() {
         conn?.cancel(); conn = nil
         lock.lock(); connected = false; buf = Data(); lock.unlock()
     }
 }
-
+ 
 final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
     weak var webView: WKWebView?
     private let link = DyNetLink()
+    private let cm = DyNetLink()          // second TCP link, dedicated to the CoolMaster (ASCII protocol)
     private let work = DispatchQueue(label: "dynet.work", attributes: .concurrent)
-
+ 
     // ---- settings + files live in the app's Documents folder ----
     private static var docs: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
     private static var kvURL: URL { docs.appendingPathComponent("kv.json") }
-
+ 
     static func kvJSON() -> String {
         guard let data = try? Data(contentsOf: kvURL),
               let s = String(data: data, encoding: .utf8), !s.isEmpty else { return "{}" }
@@ -101,7 +102,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
     private func saveKV(_ kv: [String: String]) {
         if let d = try? JSONSerialization.data(withJSONObject: kv) { try? d.write(to: Bridge.kvURL) }
     }
-
+ 
     // ---- message handler (runs on main; heavy work is dispatched off it) ----
     func userContentController(_ ucc: WKUserContentController,
                                didReceive message: WKScriptMessage,
@@ -118,7 +119,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
             DispatchQueue.main.async { replyHandler(res, nil) }
         }
     }
-
+ 
     private func handle(_ kind: String, _ m: [String: Any]) -> [String: Any] {
         switch kind {
         case "http":    return httpRequest(m)
@@ -133,6 +134,18 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
             } catch { return ["error": "\(error.localizedDescription)"] }
         case "tcpPoll": return link.poll(m["wait"] as? Double ?? 10)
         case "tcpClose": link.close(); return ["ok": true]
+        // ---- CoolMaster (second TCP link, ASCII line protocol) ----
+        case "cmOpen":
+            let ok = cm.open(m["host"] as? String ?? "", UInt16(intOf(m["port"]) ?? 10102))
+            return ok ? ["ok": true] : ["error": "connect failed"]
+        case "cmSend":
+            do {
+                try cm.send(Data(base64Encoded: m["b64"] as? String ?? "") ?? Data(),
+                            m["host"] as? String ?? "", UInt16(intOf(m["port"]) ?? 10102))
+                return ["ok": true]
+            } catch { return ["error": "\(error.localizedDescription)"] }
+        case "cmPoll": return cm.poll(m["wait"] as? Double ?? 2)
+        case "cmClose": cm.close(); return ["ok": true]
         case "appUpdate": WebApp.sync(into: webView); return ["ok": true]   // re-fetch the hosted UI; reloads if newer
         case "kvset":
             var kv = loadKV()
@@ -154,7 +167,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         default: return ["error": "unknown \(kind)"]
         }
     }
-
+ 
     private func httpRequest(_ m: [String: Any]) -> [String: Any] {
         guard let urlStr = m["url"] as? String, let url = URL(string: urlStr) else {
             return ["error": "bad url"]
@@ -164,7 +177,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         if let h = m["headers"] as? [String: String] { for (k, v) in h { req.setValue(v, forHTTPHeaderField: k) } }
         if let b64 = m["bodyB64"] as? String, let d = Data(base64Encoded: b64) { req.httpBody = d }
         else if let b = m["body"] as? String { req.httpBody = b.data(using: .utf8) }
-
+ 
         let sem = DispatchSemaphore(value: 0)
         var out: [String: Any] = ["error": "no response"]
         URLSession.shared.dataTask(with: req) { data, resp, err in
@@ -180,11 +193,11 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         _ = sem.wait(timeout: .now() + 65)
         return out
     }
-
+ 
     // ---- actions that touch UIKit ----
     private var pickReply: ((Any?, String?) -> Void)?
     private var pickMode = "pick"
-
+ 
     private func handleUI(_ kind: String, _ m: [String: Any], _ reply: @escaping (Any?, String?) -> Void) {
         DispatchQueue.main.async {
             switch kind {
@@ -211,7 +224,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
             }
         }
     }
-
+ 
     private func present(_ vc: UIViewController) {
         guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               var top = scene.keyWindow?.rootViewController else { return }
@@ -223,7 +236,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         top.present(vc, animated: true)
     }
-
+ 
     private func intOf(_ v: Any?) -> Int? {
         if let i = v as? Int { return i }
         if let d = v as? Double { return Int(d) }
@@ -231,7 +244,7 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply {
         return nil
     }
 }
-
+ 
 extension Bridge: UIDocumentPickerDelegate {
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let reply = pickReply, let url = urls.first else { pickReply?(["error": "cancelled"], nil); pickReply = nil; return }
@@ -248,7 +261,8 @@ extension Bridge: UIDocumentPickerDelegate {
         pickReply?(["error": "cancelled"], nil); pickReply = nil
     }
 }
-
+ 
 extension UIWindowScene {
     var keyWindow: UIWindow? { windows.first { $0.isKeyWindow } ?? windows.first }
 }
+ 
