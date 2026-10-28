@@ -1,17 +1,17 @@
 import SwiftUI
 import WebKit
-
+ 
 // Holds the live WebView so a dynetremote:// deep link can reach the page after Dropbox auth.
 enum AuthInbox {
     static weak var webView: WKWebView?
     static var pendingCode: String?   // code that arrived before the WebView was ready
-
+ 
     static func deliver(_ code: String) {
         let safe = code.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
         guard let wv = webView else { pendingCode = code; return }
         wv.evaluateJavaScript("window.__dbxDeepCode && window.__dbxDeepCode('\(safe)')", completionHandler: nil)
     }
-
+ 
     // Accepts dynetremote://auth?code=XXXX (or ...#code=XXXX) and hands the code to the page.
     static func handle(_ url: URL) {
         guard url.scheme?.lowercased() == "dynetremote" else { return }
@@ -24,30 +24,39 @@ enum AuthInbox {
         if let code = code, !code.isEmpty { deliver(code) }
     }
 }
-
+ 
 // ───────── Over-the-air UI ─────────
 // The app is a thin native shell; the web UI is hosted on GitHub Pages. Updating the app means
 // replacing one HTML file there — the shell fetches it, caches it for offline use, and reloads.
 // No rebuild, no reinstall. All saved data (Dropbox login, project, settings) lives in the native
 // bridge's Documents store, independent of where the HTML loads from, so updates never lose it.
 enum WebApp {
-    // The hosted UI. Must match the GitHub Pages URL for the repo (Settings → Pages → root of main).
-    static let remote = URL(string: "https://arazishaked.github.io/dynet-remote/index.html")!
-
+    // The hosted UI. Each target sets RemoteURL in its Info.plist (index.html = technician,
+    // user.html = end user), so one codebase ships as two apps.
+    static var remote: URL {
+        let s = (Bundle.main.object(forInfoDictionaryKey: "RemoteURL") as? String)
+            ?? "https://arazishaked.github.io/dynet-remote/index.html"
+        return URL(string: s)!
+    }
+    // Which bundled HTML to seed the offline cache from on first run (index or user).
+    static var seedResource: String {
+        (Bundle.main.object(forInfoDictionaryKey: "SeedResource") as? String) ?? "index"
+    }
+ 
     static var cacheFile: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("app.html")
     }
-
+ 
     // A usable copy must always exist: seed the cache from the HTML bundled at build time on first run.
     static func seedIfNeeded() {
         let f = cacheFile
         if (try? f.checkResourceIsReachable()) == true { return }
-        if let u = Bundle.main.url(forResource: "index", withExtension: "html"),
+        if let u = Bundle.main.url(forResource: seedResource, withExtension: "html"),
            let s = try? String(contentsOf: u, encoding: .utf8) {
             try? s.write(to: f, atomically: true, encoding: .utf8)
         }
     }
-
+ 
     // Show the cached copy (instant, works offline). file:// origin — same as the old bundled load,
     // and native mode keeps all state in the bridge, so the origin carries no data.
     static func load(into wv: WKWebView) {
@@ -55,7 +64,7 @@ enum WebApp {
         let f = cacheFile
         wv.loadFileURL(f, allowingReadAccessTo: f.deletingLastPathComponent())
     }
-
+ 
     // Pull the latest HTML from Pages; if it changed, cache it and reload the WebView.
     static func sync(into wv: WKWebView?) {
         var req = URLRequest(url: remote)
@@ -71,7 +80,7 @@ enum WebApp {
         }.resume()
     }
 }
-
+ 
 @main
 struct DyNetRemoteApp: App {
     var body: some Scene {
@@ -81,31 +90,31 @@ struct DyNetRemoteApp: App {
         }
     }
 }
-
+ 
 struct WebHost: UIViewRepresentable {
     func makeCoordinator() -> Bridge { Bridge() }
-
+ 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
-
+ 
         let ucc = WKUserContentController()
         // Tell the page it runs inside the native host, and hand it the saved settings before any script runs.
         let boot = "window.__DYNET_NATIVE='wk';window.__DYNET_TCP=true;window.__KV=\(Bridge.kvJSON());"
         ucc.addUserScript(WKUserScript(source: boot, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         ucc.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "dynet")
         cfg.userContentController = ucc
-
+ 
         let wv = WKWebView(frame: .zero, configuration: cfg)
         wv.scrollView.bounces = false
         wv.scrollView.contentInsetAdjustmentBehavior = .never
         if #available(iOS 16.4, *) { wv.isInspectable = true }
         context.coordinator.webView = wv
         AuthInbox.webView = wv
-
+ 
         WebApp.load(into: wv)      // cached / bundled copy — instant, offline-capable
         WebApp.sync(into: wv)      // fetch the latest in the background; reloads only if it changed
-
+ 
         // If a deep-link code arrived before the page was ready, deliver it once loaded.
         if let code = AuthInbox.pendingCode {
             AuthInbox.pendingCode = nil
@@ -113,6 +122,7 @@ struct WebHost: UIViewRepresentable {
         }
         return wv
     }
-
+ 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
+ 
