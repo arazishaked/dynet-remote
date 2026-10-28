@@ -886,13 +886,14 @@ const Backend = {
   // Save config and/or the current file metadata, and bump version so user apps re-pull.
   async saveProject(id, fields){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
-    const { data:cur } = await sb.from('projects').select('version').eq('id', id).single();
+    const { data:cur } = await sb.from('projects').select('version').eq('id', id).maybeSingle();
     const next = ((cur && cur.version) || 0) + 1;
     const { data, error } = await sb.from('projects')
       .update(Object.assign({}, fields, { version:next, updated_at:new Date().toISOString() }))
-      .eq('id', id).select().single();
+      .eq('id', id).select();
     if(error) throw new Error(error.message);
-    return data;
+    if(!data || !data.length) throw new Error('לא ניתן לשמור. ודא שאתה מחובר כטכנאי (והרצת את patch3). אם הבעיה נמשכת — התנתק והתחבר מחדש.');
+    return data[0];
   },
   async uploadBlob(projectId, bytes){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
