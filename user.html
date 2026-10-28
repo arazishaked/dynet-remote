@@ -55,6 +55,8 @@ button{cursor:pointer}
 svg{display:block}
 
 .app{max-width:620px;margin:0 auto;min-height:100%;display:flex;flex-direction:column}
+/* End-user app: header scrolls away with the content so it never covers the climate card / controls. */
+body.role-user header.top{position:static}
 header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);
   padding-block:11px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));
   display:flex;align-items:center;gap:11px}
@@ -352,12 +354,10 @@ details.dev>summary::-webkit-details-marker{display:none}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
 .ahero.has-climate .hero-side{min-width:0;align-self:center}
 .ahero.clim-only{display:flex}.ahero.clim-only .hero-side{width:100%;max-width:320px}
-/* phone: climate card beside a slightly smaller ring — keeps the top short so the sticky header doesn't cover it */
+/* phone: climate card full width at the top, ring below it (as in the reference) */
 @media(max-width:470px){
-  .ahero.has-climate{grid-template-columns:minmax(130px,1fr) auto;gap:10px;align-items:start}
-  .ahero.has-climate .hero-side{justify-self:stretch;order:0}
-  .ahero.has-climate .hero-ring .ring{transform:scale(.8);transform-origin:top center;margin:-14px 0 -24px}
-  .ahero.has-climate .rhint{display:none}
+  .ahero.has-climate{grid-template-columns:1fr;gap:12px}
+  .ahero.has-climate .hero-side{order:-1;justify-self:stretch}
   .ahero.has-climate .hero-spacer{display:none}
 }
 .grid2{display:grid;grid-template-columns:2fr 1fr;gap:10px}
@@ -1358,7 +1358,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1314";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1325";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1875,11 +1875,16 @@ const GW = {
    (native cmSend/cmPoll). The technician sets the CoolMaster address in the admin site
    (P.tech.cmIp / cmPort); unit→room mapping lives in P.tech.acUnits. */
 const CM = {
-  // When the app is on the external link, reach the CoolMaster through the home's external address
-  // (its local IP isn't reachable from outside). Falls back to the project's external address.
-  host(){ const t=(P&&P.tech)||{}; if(cfg.activeConn==='ext') return t.cmExtIp || cfg.extBase || t.cmIp || ''; return t.cmIp || ''; },
-  port(){ const t=(P&&P.tech)||{}; if(cfg.activeConn==='ext') return t.cmExtPort || t.cmPort || 10102; return t.cmPort || 10102; },
-  enabled(){ return !!this.host() && HAS_TCP; },
+  _ep: null,   // last working endpoint {host,port}
+  local(){ const t=(P&&P.tech)||{}; return t.cmIp ? { host:t.cmIp, port:t.cmPort||10102 } : null; },
+  ext(){ const t=(P&&P.tech)||{}; const h=t.cmExtIp||cfg.extBase; return h ? { host:h, port:t.cmExtPort||t.cmPort||10102 } : null; },
+  // Candidate endpoints to try, in order: when on the external link, external first; else local first.
+  candidates(){ const l=this.local(), e=this.ext(), out=[];
+    if(cfg.activeConn==='ext'){ if(e)out.push(e); if(l)out.push(l); } else { if(l)out.push(l); if(e)out.push(e); }
+    return out; },
+  host(){ return this._ep ? this._ep.host : ((this.candidates()[0]||{}).host || ''); },
+  port(){ return this._ep ? this._ep.port : ((this.candidates()[0]||{}).port || 10102); },
+  enabled(){ return this.candidates().length>0 && HAS_TCP; },
   units(){ return (P && P.tech && P.tech.acUnits) || []; },        // [{line, addr, room, name}]
   uid(u){ let L=String(u.line||'L1').trim(); if(!/^L/i.test(L)) L='L'+L; return L+'.'+String(u.addr||'').trim(); },
   // Which room a unit belongs to: the explicitly chosen room id, else a name match.
@@ -1887,17 +1892,26 @@ const CM = {
   unitsForRoom(aid){ return this.units().filter(u => this.roomOf(u)===String(aid))
                               .map(u => ({ uid:this.uid(u), name:u.name })); },
   async cmd(line){
-    if(!this.enabled()) throw new Error('CoolMaster לא מוגדר');
+    if(!HAS_TCP) throw new Error('זמין רק באפליקציה בטלפון (צריך חיבור TCP נייטיב).');
+    const cand = this.candidates();
+    if(!cand.length) throw new Error('CoolMaster לא מוגדר');
     const bytes = new TextEncoder().encode(line + '\r');
-    const s = await native({ kind:'cmSend', host:this.host(), port:this.port(), b64:u8ToB64(bytes) });
-    if(!s || s.error) throw new Error('אין חיבור ל-CoolMaster ('+this.host()+':'+this.port()+')');
-    let text=''; const t0=Date.now();
-    while(Date.now()-t0 < 3000){
-      const r = await native({ kind:'cmPoll', wait:0.4 });
-      if(r && r.b64){ text += new TextDecoder().decode(b64ToU8(r.b64)); if(/(^|\s)OK(\s|$)|Error/i.test(text)) break; }
-      else if(text) break;
+    let lastErr='';
+    // Try the preferred endpoint first; if it can't connect, fall back to the other (local ↔ external).
+    const order = this._ep ? [this._ep, ...cand.filter(e=>e.host!==this._ep.host||e.port!==this._ep.port)] : cand;
+    for(const ep of order){
+      const s = await native({ kind:'cmSend', host:ep.host, port:ep.port, b64:u8ToB64(bytes) });
+      if(!s || s.error){ lastErr='אין חיבור ל-'+ep.host+':'+ep.port; this._ep=null; continue; }
+      this._ep = ep;
+      let text=''; const t0=Date.now();
+      while(Date.now()-t0 < 3000){
+        const r = await native({ kind:'cmPoll', wait:0.4 });
+        if(r && r.b64){ text += new TextDecoder().decode(b64ToU8(r.b64)); if(/(^|\s)OK(\s|$)|Error/i.test(text)) break; }
+        else if(text) break;
+      }
+      return text;
     }
-    return text;
+    throw new Error(lastErr || 'אין חיבור ל-CoolMaster');
   },
   // Parse an `ls` listing. Columns: UID ON/OFF setpoint roomtemp fan mode [fail filter demand]
   parseLs(text){
@@ -3183,11 +3197,13 @@ function renderUserSetup(m){
   $('#cmTest') && $('#cmTest').addEventListener('click', async e => {
     const out=$('#cmOut'); out.hidden=false;
     if(!HAS_TCP){ out.textContent='זמין רק באפליקציה בטלפון (צריך חיבור TCP נייטיב).'; return; }
-    out.textContent='שולח ls ל-'+CM.host()+':'+CM.port()+' …'; e.target.disabled=true;
+    const cand=CM.candidates().map(c=>c.host+':'+c.port).join(' , ');
+    out.textContent='מנסה כתובות: '+(cand||'(אין)')+' …'; e.target.disabled=true;
     try{
       const raw = await CM.cmd('ls');
       const units = CM.parseLs(raw);
-      out.textContent = '--- פלט גולמי (ls) ---\n' + (raw||'(ריק — אין תשובה)') +
+      out.textContent = 'חובר אל: ' + (CM._ep ? CM._ep.host+':'+CM._ep.port : '?') + '\n' +
+        '--- פלט גולמי (ls) ---\n' + (raw||'(ריק — אין תשובה)') +
         '\n\n--- מה שהמערכת פירקה ('+units.length+' יחידות) ---\n' +
         units.map(u=>`${u.uid}  on=${u.on}  set=${u.setTemp}  room=${u.roomTemp}  fan=${u.fan}  mode=${u.mode}`).join('\n');
     }catch(err){ out.textContent='שגיאה: '+err.message; }
