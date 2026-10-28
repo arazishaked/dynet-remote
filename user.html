@@ -1355,7 +1355,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1228";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1249";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2235,11 +2235,16 @@ const sysLabel = t => t==='ac' ? 'מיזוג' : (SYS_TYPES[t]||{}).he || t;
 // Bottom "systems in room" card handles covers only; A/C is a CoolMaster climate card at the top.
 const sysTiles = (type, areas) => `<div class="cov-grid">${areas.map(a=>coverTile(a,type)).join('')}</div>`;
 function renderUserAreas(m){
-  clearInterval(_cmPoll); _cmPoll=null;   // no live A/C polling on the rooms list
+  clearInterval(_cmPoll); _cmPoll=null;
   const { lightFloors } = classifyUser();
   const floorHtml = fl => `<section class="floor"><div class="floor-title">${esc(fl.floor)}</div>
     <div class="rooms-grid">${fl.rooms.map(roomTile).join('')}</div></section>`;
-  m.innerHTML = `<div class="userareas">${lightFloors.map(floorHtml).join('')}</div>`;
+  // A/C units whose name didn't match any room — show them here so they're never invisible.
+  const orphan = (USER && acIncluded()) ? CM.units().filter(u => acMatchRoom(u.name)==null).map(u => ({ uid:CM.uid(u), name:u.name })) : [];
+  const orphanHtml = orphan.length ? `<section class="floor"><div class="floor-title">מיזוג (לא שויך לחדר — בדוק שהשם תואם לשם חדר)</div>
+    <div class="clim-col">${orphan.map(climateCard).join('')}</div></section>` : '';
+  m.innerHTML = `<div class="userareas">${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
+  if(orphan.length && CM.enabled()){ cmRefresh(); _cmPoll=setInterval(cmRefresh,5000); }
 }
 /* Areas tab */
 function renderAreas(m){
@@ -2393,7 +2398,7 @@ function renderArea(m, a){
       ${Object.keys(byType).map(t => `<div class="sys-group"><div class="sys-grp-t">${esc(sysLabel(t))}</div>${sysTiles(t, byType[t])}</div>`).join('')}</section>`;
   }
   // A/C: CoolMaster units mapped to this room (by the technician), controlled directly.
-  const cmUnits = USER ? CM.unitsForRoom(a.id) : [];
+  const cmUnits = (USER && acIncluded()) ? CM.unitsForRoom(a.id) : [];
   const climate = cmUnits.length ? `<div class="clim-col">${cmUnits.map(climateCard).join('')}</div>` : '';
   clearInterval(_cmPoll);
   if(cmUnits.length && CM.enabled()){ cmRefresh(); _cmPoll = setInterval(cmRefresh, 5000); }   // live feedback while the room is open
