@@ -1291,6 +1291,8 @@ function renderDetail(){
 /* ---- Dropbox folder linking ---- */
 function renderDbxSection(host, p){
   host.innerHTML='';
+  // Keep the server's copy of the Dropbox connection current, so the sync function can run on its own.
+  if(Dbx.connected()){ try{ Backend.saveDropboxAuth(Dbx.getRefresh()); }catch(_){} }
   if(p.dropbox_folder){
     host.appendChild(el('div','note',`📂 עוקב אחרי תיקייה: <b class="ltr">${esc(p.dropbox_folder)}</b> — נטען תמיד הקובץ הכי חדש.`));
     const row=el('div','row'); row.style.marginTop='8px';
