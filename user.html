@@ -1270,13 +1270,14 @@ const Backend = {
   // Save config and/or the current file metadata, and bump version so user apps re-pull.
   async saveProject(id, fields){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
-    const { data:cur } = await sb.from('projects').select('version').eq('id', id).single();
+    const { data:cur } = await sb.from('projects').select('version').eq('id', id).maybeSingle();
     const next = ((cur && cur.version) || 0) + 1;
     const { data, error } = await sb.from('projects')
       .update(Object.assign({}, fields, { version:next, updated_at:new Date().toISOString() }))
-      .eq('id', id).select().single();
+      .eq('id', id).select();
     if(error) throw new Error(error.message);
-    return data;
+    if(!data || !data.length) throw new Error('לא ניתן לשמור. ודא שאתה מחובר כטכנאי (והרצת את patch3). אם הבעיה נמשכת — התנתק והתחבר מחדש.');
+    return data[0];
   },
   async uploadBlob(projectId, bytes){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
@@ -1351,7 +1352,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-0814";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-0843";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -3592,7 +3593,9 @@ function startUserSync(projectId){
           const keep={tab:route.tab, area:(route.area!=null&&parsed.areas[route.area])?route.area:null};
           setProject(parsed, buf); P.tech=Object.assign({names:{},includeAC:true}, proj.config||{}); cfg.includeAC=P.tech.includeAC; P._uc=null;
           applyUserConn(P.tech, parsed);
-          P._server={id:projectId, version:v}; route=keep; render(); toast('הפרויקט עודכן ✅',4000);
+          P._server={id:projectId, version:v}; route=keep; render();
+          if(HAS_TCP) native({ kind:'tcpClose' }); connect();   // re-resolve local/external with the new address
+          toast('הפרויקט עודכן ✅',4000);
         }
       }
     }catch(e){}
