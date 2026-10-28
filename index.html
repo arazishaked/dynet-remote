@@ -348,6 +348,14 @@ details.dev>summary::-webkit-details-marker{display:none}
 .cl-fb{flex:1;padding:6px 2px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:10.5px;font-weight:600}
 .cl-fb[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
 .cl-fb:active{transform:scale(.95)}
+/* "running A/C" indication at the top of the rooms list */
+.ac-active{display:flex;flex-direction:column;gap:8px}
+.ac-live{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid var(--accent-border);border-radius:14px;background:var(--accent-soft);color:var(--fg);text-align:start}
+.ac-live:active{transform:scale(.99)}
+.ac-live .al-ic{color:var(--accent);display:flex;flex:none}.ac-live .al-ic svg{width:22px;height:22px}
+.ac-live .al-nm{font-weight:650;font-size:14px}
+.ac-live .al-t{color:var(--muted);font-size:12.5px;margin-inline-start:auto;white-space:nowrap}
+.ac-live .al-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 9px 1px var(--glow)}
 /* hero: ring centered in the middle column, climate card to one side */
 .ahero.has-climate{display:grid;grid-template-columns:minmax(118px,1fr) auto minmax(118px,1fr);gap:12px;align-items:center;flex-direction:row}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
@@ -1357,7 +1365,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1332";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1353";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1950,7 +1958,26 @@ function acMatchRoom(name){
 }
 async function cmRefresh(){
   if(!CM.enabled()) return;
-  try{ const list = await CM.list(); list.forEach(u => cmState[u.uid] = u); updateClimateCards(); }catch(e){}
+  try{ const list = await CM.list(); list.forEach(u => cmState[u.uid] = u); updateClimateCards(); renderAcActive(); }catch(e){}
+}
+// Room name (or unit name) for a CoolMaster unit, by its uid.
+function cmRoomLabel(uid){
+  const u = CM.units().find(x => CM.uid(x)===uid); if(!u) return uid;
+  const rid = CM.roomOf(u); const a = rid!=null && P && P.areas[rid];
+  return a ? areaName(a) : (u.name||uid);
+}
+// Banner on the rooms list: which A/C units are currently running.
+function renderAcActive(){
+  const box = document.getElementById('acActive'); if(!box) return;
+  const on = CM.units().map(u=>({uid:CM.uid(u),u})).filter(x=>cmState[x.uid] && cmState[x.uid].on);
+  if(!on.length){ box.innerHTML=''; return; }
+  box.innerHTML = `<section class="floor"><div class="floor-title">מזגנים פועלים</div>
+    <div class="ac-active">${on.map(x=>{ const st=cmState[x.uid]||{}; const rid=CM.roomOf(x.u);
+      return `<button class="ac-live" ${rid!=null?`data-area="${rid}" data-roomtile="${rid}"`:''}>
+        <span class="al-ic">${AC_SVG}</span>
+        <span class="al-nm">${esc(cmRoomLabel(x.uid))}</span>
+        <span class="al-t">${st.setTemp!=null?st.setTemp+'°':''}${st.roomTemp!=null?` · חדר ${st.roomTemp}°`:''}</span>
+        <span class="al-dot"></span></button>`; }).join('')}</div></section>`;
 }
 function areaLabel(id){ const a=P&&P.areas[id]; return a && a.name ? `${a.name} (${id})` : 'אזור '+id; }
 function chLabel(area, cn){ if(!cn) return ''; const c = P && findCh(area, cn); return c ? chName(c) : 'ערוץ '+cn; }
@@ -2090,7 +2117,17 @@ const openFolders = new Set();   // always start collapsed on app open (not pers
 const openDevs = new Set();
 const checkedAreas = new Set();  // rooms whose state we already read once (first-entry status check)
 let lastArea = null;             // last room opened, so leaving Areas and returning reopens it
-function go(r){ if(r.tab!=='setup') dbxAwaitingCode = false; route = Object.assign({ area:null }, r); if(route.tab==='areas' && route.area!=null) lastArea = route.area; render(); window.scrollTo(0,0); }
+let _areasScroll = 0;   // remembered scroll position of the rooms list
+function go(r){
+  if(r.tab!=='setup') dbxAwaitingCode = false;
+  const wasAreasList = route.tab==='areas' && route.area==null;
+  if(wasAreasList) _areasScroll = window.scrollY;               // leaving the rooms list → remember where we were
+  route = Object.assign({ area:null }, r);
+  if(route.tab==='areas' && route.area!=null) lastArea = route.area;
+  render();
+  const toAreasList = route.tab==='areas' && route.area==null;
+  window.scrollTo(0, toAreasList ? (_areasScroll||0) : 0);      // returning to the list → restore the spot
+}
 
 function render(){
   if(USER && (route.tab==='devices' || route.tab==='log')) route.tab = 'areas';   // those tabs don't exist for end-users
@@ -2269,8 +2306,10 @@ function renderUserAreas(m){
   const orphan = (USER && acIncluded()) ? CM.units().filter(u => CM.roomOf(u)==null).map(u => ({ uid:CM.uid(u), name:u.name })) : [];
   const orphanHtml = orphan.length ? `<section class="floor"><div class="floor-title">מיזוג (לא שויך לחדר — בדוק שהשם תואם לשם חדר)</div>
     <div class="clim-col">${orphan.map(climateCard).join('')}</div></section>` : '';
-  m.innerHTML = `<div class="userareas">${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
-  if(orphan.length && CM.enabled()){ cmRefresh(); _cmPoll=setInterval(cmRefresh,5000); }
+  m.innerHTML = `<div class="userareas"><div id="acActive"></div>${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
+  // Live A/C indication at the top of the rooms list: which units are currently running.
+  const anyAC = (USER && acIncluded()) ? CM.units().length : 0;
+  if(anyAC && CM.enabled()){ renderAcActive(); cmRefresh(); _cmPoll=setInterval(cmRefresh,6000); }
 }
 /* Areas tab */
 function renderAreas(m){
@@ -3181,33 +3220,12 @@ function renderUserSetup(m){
       </div>
       <div class="note">הכתובת והפורט המקומיים נקבעים ע״י הטכנאי ולכן נעולים. אתה עורך את הכתובת והפורט החיצוניים.</div>
     </section>
-    ${(P&&P.tech&&P.tech.cmIp) ? `<section class="card">
-      <h2>מיזוג · אבחון CoolMaster</h2>
-      <div class="note">כתובת: <b class="ltr">${esc(P.tech.cmIp)}:${esc(P.tech.cmPort||10102)}</b></div>
-      <div class="actions" style="margin-top:8px"><button class="btn primary" id="cmTest">בדוק חיבור (ls)</button></div>
-      <pre class="code" id="cmOut" style="white-space:pre-wrap;max-height:260px;overflow:auto;direction:ltr;text-align:left;margin-top:8px" hidden></pre>
-    </section>` : ''}
     ${NATIVE ? `<div class="note" style="text-align:center;margin-top:4px">build ${BUILD_ID && BUILD_ID[0]!=='/' ? esc(BUILD_ID) : '—'} · <a href="#" id="chkUpdate">בדוק עדכון</a></div>` : ''}`;
   m.querySelectorAll('#themeSeg button').forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.theme); m.querySelectorAll('#themeSeg button').forEach(x=>x.setAttribute('aria-pressed', x===b)); }));
   const reconnect = () => { saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); connect(); setTimeout(()=>renderUserSetup(m), 500); };
   $('#extIp').addEventListener('change', e => { cfg.extBase = e.target.value.trim().replace(/^https?:\/\//,''); e.target.value=cfg.extBase; reconnect(); });
   $('#extPort').addEventListener('change', e => { cfg.extPort = (+e.target.value)||95; e.target.value=cfg.extPort; reconnect(); });
   $('#chkUpdate') && $('#chkUpdate').addEventListener('click', e => { e.preventDefault(); toast('בודק עדכון…', 3000); native({ kind:'appUpdate' }); });
-  $('#cmTest') && $('#cmTest').addEventListener('click', async e => {
-    const out=$('#cmOut'); out.hidden=false;
-    if(!HAS_TCP){ out.textContent='זמין רק באפליקציה בטלפון (צריך חיבור TCP נייטיב).'; return; }
-    const cand=CM.candidates().map(c=>c.host+':'+c.port).join(' , ');
-    out.textContent='מנסה כתובות: '+(cand||'(אין)')+' …'; e.target.disabled=true;
-    try{
-      const raw = await CM.cmd('ls');
-      const units = CM.parseLs(raw);
-      out.textContent = 'חובר אל: ' + (CM._ep ? CM._ep.host+':'+CM._ep.port : '?') + '\n' +
-        '--- פלט גולמי (ls) ---\n' + (raw||'(ריק — אין תשובה)') +
-        '\n\n--- מה שהמערכת פירקה ('+units.length+' יחידות) ---\n' +
-        units.map(u=>`${u.uid}  on=${u.on}  set=${u.setTemp}  room=${u.roomTemp}  fan=${u.fan}  mode=${u.mode}`).join('\n');
-    }catch(err){ out.textContent='שגיאה: '+err.message; }
-    e.target.disabled=false;
-  });
 }
 function renderSetup(m){
   if(USER) return renderUserSetup(m);
