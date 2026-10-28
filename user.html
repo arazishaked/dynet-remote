@@ -1355,7 +1355,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1249";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1251";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1918,9 +1918,16 @@ function acMatchRoom(name){
   if(!name || !P) return null;
   const n = heNorm(name), ALIASES=[['מאסטר','הורים']];
   const rooms = Object.values(P.areas).map(a=>({id:a.id,nm:heNorm(areaName(a))})).filter(r=>r.nm);
+  // 1) alias (מאסטר → הורים)
   for(const [aw,rw] of ALIASES){ if(n.includes(heNorm(aw))){ const c=rooms.filter(r=>r.nm.includes(heNorm(rw))).sort((a,b)=>b.nm.length-a.nm.length)[0]; if(c) return c.id; } }
+  // 2) whole-name exact / substring either way
   let best=null; for(const r of rooms){ if(r.nm===n || r.nm.includes(n) || n.includes(r.nm)){ if(!best||r.nm.length>best.nm.length) best=r; } }
-  return best ? best.id : null;
+  if(best) return best.id;
+  // 3) by significant word — handles abbreviations like "ח.אורחים" → "חדר אורחים"
+  const STOP = new Set(['חדר','ח','חדרי','room']);
+  const toks = n.split(/[^א-תa-z0-9]+/).filter(t => t.length>=2 && !STOP.has(t));
+  for(const t of toks){ const c=rooms.filter(r=>r.nm.split(/[^א-תa-z0-9]+/).some(w=>w.length>=2 && (w===t || w.includes(t) || t.includes(w)))).sort((a,b)=>b.nm.length-a.nm.length)[0]; if(c) return c.id; }
+  return null;
 }
 async function cmRefresh(){
   if(!CM.enabled()) return;
