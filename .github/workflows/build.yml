@@ -1,26 +1,28 @@
 name: Build unsigned IPA
-
+ 
 on:
   push:
     branches: [ main ]
     paths-ignore:
-      - 'index.html'
+      - 'index.html'        # the over-the-air UI (GitHub Pages) — updating it must NOT rebuild the IPA
+      - 'user.html'         # the end-user over-the-air UI — same, no rebuild on OTA update
+      - 'admin.html'        # the technician admin website — not part of the native app
       - '.nojekyll'
   workflow_dispatch:
-
+ 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15        # needs Xcode 16 to open the project (format 77); macos-14 ships Xcode 15.4 and fails
     steps:
       - uses: actions/checkout@v4
-
+ 
       - name: Install XcodeGen
         run: brew install xcodegen
-
+ 
       - name: Generate Xcode project
         run: xcodegen generate
-
-      - name: Build unsigned archive
+ 
+      - name: Build technician app (DyNetRemote)
         run: |
           set -o pipefail
           xcodebuild \
@@ -32,19 +34,42 @@ jobs:
             -archivePath build/DyNetRemote.xcarchive \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             clean archive
-
-      - name: Package IPA
+ 
+      - name: Build end-user app (DyNetUser)
         run: |
-          APP=$(ls -d build/DyNetRemote.xcarchive/Products/Applications/*.app | head -1)
-          echo "Packaging $APP"
-          mkdir -p Payload
-          cp -R "$APP" Payload/
-          zip -qr DyNetRemote.ipa Payload
-          ls -la DyNetRemote.ipa
-
-      - name: Upload IPA
+          set -o pipefail
+          xcodebuild \
+            -project DyNetRemote.xcodeproj \
+            -scheme DyNetUser \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/DyNetUser.xcarchive \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            clean archive
+ 
+      - name: Package IPAs
+        run: |
+          for NAME in DyNetRemote DyNetUser; do
+            APP=$(ls -d build/$NAME.xcarchive/Products/Applications/*.app | head -1)
+            echo "Packaging $APP -> $NAME.ipa"
+            rm -rf Payload && mkdir -p Payload
+            cp -R "$APP" Payload/
+            zip -qr "$NAME.ipa" Payload
+          done
+          ls -la *.ipa
+ 
+      - name: Upload technician IPA
         uses: actions/upload-artifact@v4
         with:
           name: DyNetRemote-ipa
           path: DyNetRemote.ipa
           if-no-files-found: error
+ 
+      - name: Upload end-user IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DyNetUser-ipa
+          path: DyNetUser.ipa
+          if-no-files-found: error
+ 
