@@ -1366,7 +1366,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1353";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1411";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2119,15 +2119,19 @@ const openDevs = new Set();
 const checkedAreas = new Set();  // rooms whose state we already read once (first-entry status check)
 let lastArea = null;             // last room opened, so leaving Areas and returning reopens it
 let _areasScroll = 0;   // remembered scroll position of the rooms list
+const curScrollY = () => window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+function setScrollY(y){ window.scrollTo(0,y); try{ document.documentElement.scrollTop=y; document.body.scrollTop=y; }catch(e){} }
 function go(r){
   if(r.tab!=='setup') dbxAwaitingCode = false;
   const wasAreasList = route.tab==='areas' && route.area==null;
-  if(wasAreasList) _areasScroll = window.scrollY;               // leaving the rooms list → remember where we were
+  if(wasAreasList) _areasScroll = curScrollY();                 // leaving the rooms list → remember where we were
   route = Object.assign({ area:null }, r);
   if(route.tab==='areas' && route.area!=null) lastArea = route.area;
   render();
   const toAreasList = route.tab==='areas' && route.area==null;
-  window.scrollTo(0, toAreasList ? (_areasScroll||0) : 0);      // returning to the list → restore the spot
+  const target = toAreasList ? (_areasScroll||0) : 0;           // into a room → top; back to list → the remembered spot
+  setScrollY(target);
+  requestAnimationFrame(()=>{ setScrollY(target); requestAnimationFrame(()=>setScrollY(target)); });
 }
 
 function render(){
