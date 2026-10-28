@@ -1,0 +1,1412 @@
+<!doctype html>
+<html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DyNet · ניהול</title>
+<style>
+:root{
+  --bg:#0f1115;--card:#171a21;--line:#272c36;--fg:#eef1f6;--muted:#9aa3b2;
+  --accent:#ff7f1f;--accent-text:#ffb062;--ok:#39c07a;--danger:#e5564b;
+  --radius:14px;
+}
+@media(prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  --bg:#f4f6fa;--card:#ffffff;--line:#e3e7ee;--fg:#1a1d24;--muted:#5d6675;--accent:#e86f10;--accent-text:#b9540a;
+}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Heebo",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:860px;margin:0 auto;padding:18px 16px 60px}
+.top{display:flex;align-items:center;gap:12px;margin:6px 0 18px}
+.top .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#ffb062);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+.top h1{font-size:19px;margin:0;font-weight:700}
+.top .sp{flex:1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 12px;font-weight:650}
+.muted{color:var(--muted)}
+.note{color:var(--muted);font-size:13px;line-height:1.55}
+.field{margin:10px 0}
+.field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;color:var(--fg);padding:11px 12px;font-size:15px;outline:none}
+input:focus{border-color:var(--accent)}
+.ltr{direction:ltr;text-align:left}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{appearance:none;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:10px;padding:10px 15px;font-size:14px;font-weight:600;cursor:pointer;transition:.12s}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--line))}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.sm{padding:7px 11px;font-size:13px}
+.seg{display:flex;gap:6px}
+.seg button{flex:1;padding:9px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font-weight:600;cursor:pointer}
+.seg button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--bg))}
+.list{display:flex;flex-direction:column;gap:8px}
+.item{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg)}
+.item .nm{flex:1;min-width:0}
+.item .nm b{font-weight:650}
+.item .nm small{display:block;color:var(--muted);font-size:12px}
+.pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.on{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+.proj-sel{cursor:pointer}
+.proj-sel:hover{border-color:var(--accent)}
+.proj-sel[aria-selected="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111419;color:#fff;border:1px solid var(--line);padding:11px 16px;border-radius:12px;font-size:14px;max-width:90%;z-index:50;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.toast[hidden]{display:none}
+.rooms{display:grid;grid-template-columns:1fr;gap:8px}
+.floorlbl{font-size:12px;color:var(--accent-text);font-weight:700;margin:8px 0 2px}
+.rn{display:flex;gap:8px;align-items:center}
+.rn input{flex:1}
+.hide{display:none!important}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="top"><span class="logo">D</span><h1>DyNet · ניהול טכנאי</h1><span class="sp"></span><span id="whoami" class="note"></span></div>
+  <div id="app"><div class="card"><div class="note">טוען… <span class="spin"></span></div></div></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+/* DLJ parser — reads a Philips Dynalite System Builder job (.dlj = zip with Current/JobData.xml, UTF-16).
+   Uses only basic DOM calls so it runs both in the browser (DOMParser) and in Node (xmldom). */
+var DLJ = (function () {
+  function kids(el, tag) {
+    var out = [];
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 1 && (!tag || n.nodeName === tag)) out.push(n);
+    }
+    return out;
+  }
+  function kid(el, tag) {
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 1 && n.nodeName === tag) return n;
+    }
+    return null;
+  }
+  function path(el) {
+    var c = el;
+    for (var i = 1; i < arguments.length && c; i++) c = kid(c, arguments[i]);
+    return c;
+  }
+  function attr(el, n) {
+    var v = el && el.getAttribute(n);
+    return v == null ? '' : v;
+  }
+
+  function decodeXmlBytes(u8) {
+    if (u8[0] === 0xff && u8[1] === 0xfe) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+    if (u8[0] === 0xfe && u8[1] === 0xff) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+    if (u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) return new TextDecoder('utf-8').decode(u8.subarray(3));
+    if (u8[1] === 0) return new TextDecoder('utf-16le').decode(u8);
+    return new TextDecoder('utf-8').decode(u8);
+  }
+
+  function deviceKind(props, flags, chCount) {
+    if (props['MAC Address']) return 'gateway';
+    if (flags.DALIBallastAttributes) return 'dali';
+    if ('Panel Cover Type' in props) return 'panel';
+    if (flags.CurrentSensorChannels) return 'relay';
+    if (chCount) return 'load';
+    return 'other';
+  }
+
+  function parseJob(doc, fileName) {
+    var root = doc.documentElement;
+    if (!root || root.nodeName !== 'DL4Job') throw new Error('הקובץ אינו פרויקט System Builder (חסר DL4Job).');
+
+    // Physical channel count per device
+    var chCount = {};
+    var pc = path(root, 'NetworkData', 'Network', 'PhysicalChannelCache');
+    if (pc) kids(pc, 'CachedPhysicalChannel').forEach(function (c) {
+      var d = attr(c, 'duid').toUpperCase();
+      chCount[d] = Math.max(chCount[d] || 0, +attr(c, 'channel') + 1);
+    });
+
+    // Devices
+    var devices = {}, order = [];
+    var dd = kid(root, 'DeviceData');
+    (dd ? kids(dd, 'Device') : []).forEach(function (dev) {
+      var duid = attr(dev, 'duid').toUpperCase();
+      var dn = kid(dev, 'DyNetDevice');
+      var props = {}, flags = {}, fw = '';
+      var nmp = dn && kid(dn, 'NonMemoryProperties');
+      (nmp ? kids(nmp, 'Property') : []).forEach(function (p) {
+        kids(p).forEach(function (q) {
+          var t = q.nodeName;
+          if (t === 'FirmwareVersion') fw = attr(q, 'major') + '.' + attr(q, 'minor');
+          else if (q.hasAttribute('name')) props[attr(q, 'name')] = attr(q, 'value');
+          else flags[t] = true;
+        });
+      });
+      var n = chCount[duid] || 0;
+      // Pending-flash flag: a populated <DeviceStatus> (Modified/PendingUpdates) means System Builder
+      // considers this controller to have unflashed changes. An empty <DeviceStatus/> = in-sync.
+      var dstat = dn && kid(dn, 'DeviceStatus');
+      var pending = !!(dstat && kids(dstat).length > 0);
+      devices[duid] = {
+        duid: duid,
+        name: (props['Device Name'] || '').trim(),
+        location: (props['Location'] || '').trim(),
+        kind: deviceKind(props, flags, n),
+        fw: fw,
+        serial: props['Serial Number 64'] || '',
+        mac: props['MAC Address'] || '',
+        channels: n,
+        pending: pending
+      };
+      order.push(duid);
+    });
+
+    // Logical network: folders → areas → channels
+    var areas = {}, physMap = {};
+    function readArea(el, folderPath) {
+      var id = +attr(el, 'id');
+      var a = { id: id, name: attr(el, 'name').trim(), path: folderPath, presets: {}, channels: [], devices: [] };
+      kids(el).forEach(function (c) {
+        if (c.nodeName === 'Channel') {
+          var ch = { id: +attr(c, 'id'), name: attr(c, 'name').trim(), type: +attr(c, 'type'), desc: attr(c, 'description').trim(), phys: [] };
+          kids(c, 'PhysicalChannel').forEach(function (p) {
+            var d = attr(p, 'duid').toUpperCase(), num = +attr(p, 'channel');
+            ch.phys.push([d, num]);
+            physMap[d] = physMap[d] || {};
+            physMap[d][num] = physMap[d][num] || [];
+            physMap[d][num].push([id, ch.id]);
+          });
+          a.channels.push(ch);
+        } else if (c.nodeName === 'Preset') {
+          a.presets[attr(c, 'id')] = attr(c, 'name');
+        } else if (c.nodeName === 'Device') {
+          a.devices.push(attr(c, 'duid').toUpperCase());
+        }
+      });
+      a.channels.sort(function (x, y) { return x.id - y.id; });
+      return a;
+    }
+    function walk(f, folderPath) {
+      var node = { type: 'folder', name: attr(f, 'id'), children: [] };
+      kids(f).forEach(function (c) {
+        if (c.nodeName === 'Folder') {
+          var nm = attr(c, 'id');
+          node.children.push(walk(c, folderPath.concat(nm)));
+        } else if (c.nodeName === 'Area') {
+          var a = readArea(c, folderPath);
+          areas[a.id] = a;
+          node.children.push({ type: 'area', id: a.id });
+        }
+      });
+      return node;
+    }
+    var ln = path(root, 'LogicalData', 'LogicalNetwork');
+    var rf = ln && kid(ln, 'Folder');
+    var tree = rf ? walk(rf, []) : { type: 'folder', name: 'Root', children: [] };
+
+    var name = (fileName || 'פרויקט').replace(/\.dlj$/i, '').replace(/^[0-9a-f]{8}-/i, '');
+
+    // Connection settings stored in the job: the gateway's configured IP + DyNet port.
+    // Lets the app auto-target the right PDEG when a project is opened.
+    var conn = null;
+    try {
+      var tcps = doc.getElementsByTagName ? doc.getElementsByTagName('TCPConnection') : [];
+      for (var ti = 0; ti < tcps.length; ti++) {
+        var ip = (attr(tcps[ti], 'ip_address') || '').trim();
+        if (ip) { conn = { ip: ip, port: (+attr(tcps[ti], 'port') || 95) }; break; }
+      }
+    } catch (e) {}
+
+    return {
+      name: name, fileName: fileName || '', version: attr(root, 'version'), builder: attr(root, 'EPversion'),
+      loadedAt: Date.now(), tree: tree, areas: areas, devices: devices, deviceOrder: order, physMap: physMap,
+      conn: conn
+    };
+  }
+
+  // --- Output names live inside each controller's EEPROM image (target.hex), NOT in JobData.xml.
+  // Verified on relay controllers (device code 0x60): a table of 18-byte records, 17 text bytes
+  // (Windows-1255, space-padded) + a 0x00 terminator, starting at offset 0x1507.
+  // The table is organised in blocks of 6 names: each block is a 7-byte header + 6 × 18-byte
+  // records (17 text bytes + a 0x00 terminator). So consecutive names are 18 bytes apart, but
+  // every 6th name jumps an extra 7 bytes for the next block header.
+  var NAME_BASE = 0x1507, NAME_STRIDE = 18, NAME_LEN = 17, NAME_PER_BLOCK = 6, NAME_BLOCK = 115;
+  function nameOffset(i) { return NAME_BASE + Math.floor(i / NAME_PER_BLOCK) * NAME_BLOCK + (i % NAME_PER_BLOCK) * NAME_STRIDE; }
+  // A device has this table when the first record's terminator byte is 0x00 (0xFF = other layout).
+  function hasNameTable(img) { return img && img.length >= NAME_BASE + NAME_STRIDE && img[NAME_BASE + NAME_LEN] === 0x00; }
+  function win1255Decode(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) {
+      var b = bytes[i];
+      if (b === 0x00) break;
+      if (b >= 0xE0 && b <= 0xFA) s += String.fromCharCode(0x05D0 + (b - 0xE0)); // Hebrew alef..tav
+      else s += String.fromCharCode(b);
+    }
+    return s.replace(/\s+$/, '');
+  }
+  function win1255Encode(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c >= 0x05D0 && c <= 0x05EA) out.push(0xE0 + (c - 0x05D0));
+      else if (c < 0x100) out.push(c);
+      else out.push(0x3F); // '?' for anything we can't encode
+    }
+    return out;
+  }
+  function readOutputNames(img, count) {
+    var names = [];
+    for (var i = 0; i < count; i++) {
+      var off = nameOffset(i);
+      names.push(win1255Decode(img.subarray(off, off + NAME_LEN)));
+    }
+    return names;
+  }
+  // Dimmer (0x49) and DALI (0x65) controllers keep names in a variable-length packed blob
+  // instead of the fixed table: "<KEY=VALUE>\0" segments ("D=<dev>", "PCn=<name>", "A<area>=…",
+  // "SN=…") at a self-describing structure (header 80 ?? ?? 00 01 <baseHi> 20). PCn = output n.
+  function findBlob(img) {
+    for (var x = 0x1000; x < img.length - 8; x++) {
+      if (img[x] === 0x80 && img[x + 3] === 0x00 && img[x + 4] === 0x01 && img[x + 6] === 0x20 && (((img[x + 5] << 8) | 0x20) === (x + 0x20))) {
+        return { base: x, overallLenOff: x + 2, blobLenOff: x + 0x22, textStart: x + 0x23 };
+      }
+    }
+    return null;
+  }
+  function parseBlobSegs(img, start) {
+    var segs = [], i = start;
+    while (i < img.length) {
+      var j = i; while (j < img.length && img[j] !== 0x00) j++;
+      var seg = ''; for (var k = i; k < j; k++) seg += String.fromCharCode(img[k]);
+      if (seg.length === 0) break;
+      if (seg.indexOf('=') < 0 || !/^[\x20-\x7e\xa0-\xff]+$/.test(seg)) break;
+      segs.push(seg); i = j + 1;
+    }
+    return { segs: segs, textEnd: i };
+  }
+  function strBytes(s) { var o = []; for (var i = 0; i < s.length; i++) o.push(s.charCodeAt(i) & 0xff); return o; }
+  function readBlobNames(img, count) {
+    var B = findBlob(img); if (!B) return null;
+    var parsed = parseBlobSegs(img, B.textStart);
+    var map = {};
+    parsed.segs.forEach(function (s) { var m = /^PC(\d+)=([\s\S]*)$/.exec(s); if (m) map[+m[1]] = m[2]; });
+    var names = [];
+    for (var i = 0; i < count; i++) names.push(win1255Decode(strBytes(map[i + 1] || '')));
+    return names;
+  }
+
+  // Per-output Area (16-bit big-endian at 0xA0 + 2i) and Channel (0-based, at 0xB8 + 2i).
+  var AREA_BASE = 0xA0, CHAN_BASE = 0xB8;
+  function readOutputAreas(img, count) {
+    var a = [];
+    for (var i = 0; i < count; i++) a.push((img[AREA_BASE + 2 * i] << 8) | img[AREA_BASE + 2 * i + 1]);
+    return a;
+  }
+  function readOutputChans(img, count) {
+    var c = [];
+    for (var i = 0; i < count; i++) c.push(((img[CHAN_BASE + 2 * i] << 8) | img[CHAN_BASE + 2 * i + 1]) + 1); // show 1-based
+    return c;
+  }
+  /* DALI (0x65) and dimmer (0x49) per-output area+channel table. Verified byte-for-byte
+     against System-Builder captures: DALI box 7 (out 18→area99 ch1, out 20→area88 ch6),
+     confirmed across four DALI controllers; dimmer box 11 (out→area77 ch5). The record
+     layout is identical for both device types — 14 bytes per output (0-based output index i):
+       +0 marker (0xFD assigned, 0xFF unassigned), +2..+3 area (16-bit LE), +4 channel (1 byte).
+     Only the table base differs by device type (firmware memory map): DALI 0x10020, dimmer 0x00D0.
+     The text blob's A<area>= / PCn= segments are just a name cache — not needed for the
+     structural assignment (the area-only edits added no new A<area>= segment). */
+  var AC_STRIDE = 14, AC_MARK = 0, AC_AREA = 2, AC_CHAN = 4;
+  function acTableBase(img) {
+    if (!img || !img.length) return -1;
+    if (img[0] === 0x65) return 0x10020;  // DALI
+    if (img[0] === 0x49) return 0x00d0;    // dimmer
+    return -1;
+  }
+  function hasAcTable(img, count) { var b = acTableBase(img); return b >= 0 && img.length >= b + (count || 1) * AC_STRIDE; }
+  function readAcAreas(img, count) {
+    var base = acTableBase(img), a = [];
+    for (var i = 0; i < count; i++) { var m = base + i * AC_STRIDE; a.push(img[m] === 0xfd ? (img[m + AC_AREA] | (img[m + AC_AREA + 1] << 8)) : 0); }
+    return a;
+  }
+  function readAcChans(img, count) {
+    var base = acTableBase(img), c = [];
+    for (var i = 0; i < count; i++) { var m = base + i * AC_STRIDE; c.push(img[m] === 0xfd ? img[m + AC_CHAN] : 1); }
+    return c;
+  }
+  // Curtain/blind outputs come in pairs (open+close). System Builder marks the pair in the
+  // per-output checksum table at 0x148: the even output's byte = the odd output's byte + 0x30.
+  // When detected, BOTH outputs of the pair are curtain (shown with a position slider).
+  var CKS_BASE = 0x148;
+  function readCurtains(img, count) {
+    var cur = []; for (var i = 0; i < count; i++) cur.push(false);
+    for (var p = 1; p < count; p += 2) {
+      if (img[CKS_BASE + p] === ((img[CKS_BASE + p - 1] + 0x30) & 0xff)) { cur[p] = true; cur[p - 1] = true; }
+    }
+    return cur;
+  }
+
+  async function parseDljBuffer(buf, fileName, JSZipLib, DOMParserCls) {
+    var Z = JSZipLib || (typeof JSZip !== 'undefined' ? JSZip : null);
+    var zip = await Z.loadAsync(buf);
+    var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    if (!f) throw new Error('לא נמצא JobData.xml בתוך הקובץ. ודא שזה קובץ ‎.dlj‎ של System Builder.');
+    var u8 = await f.async('uint8array');
+    var text = decodeXmlBytes(u8);
+    var P = DOMParserCls || DOMParser;
+    var doc = new P().parseFromString(text, 'text/xml');
+    var err = doc.getElementsByTagName('parsererror');
+    if (err && err.length) throw new Error('שגיאה בקריאת ה-XML של הפרויקט.');
+    var job = parseJob(doc, fileName);
+    // Device code (byte 0) and box number (byte 2), plus per-output names, live in the EEPROM image.
+    var srcFiles = {}, tgtFiles = {};
+    zip.file(/\.source\.hex$/i).forEach(function (h) { srcFiles[h.name.split('/').pop().replace(/\.source\.hex$/i, '').toUpperCase()] = h; });
+    zip.file(/\.target\.hex$/i).forEach(function (h) { tgtFiles[h.name.split('/').pop().replace(/\.target\.hex$/i, '').toUpperCase()] = h; });
+    for (var duid in job.devices) {
+      var dv = job.devices[duid];
+      var hf = srcFiles[duid];
+      if (hf) { var head = await hf.async('uint8array'); dv.dcode = head[0]; dv.box = head[2]; }
+      var tf = tgtFiles[duid];
+      if (tf && dv.channels) {
+        var img = await tf.async('uint8array');
+        if (hasNameTable(img)) {
+          dv.outNames = readOutputNames(img, dv.channels);
+          dv.outArea = readOutputAreas(img, dv.channels);
+          dv.outChan = readOutputChans(img, dv.channels);
+          dv.curtain = readCurtains(img, dv.channels);
+          dv.nameEditable = true;   // fixed-width table (relay) — names + area/channel
+          dv.acEditable = true;
+          dv.nameFormat = 'table';
+        } else {
+          var blobNames = readBlobNames(img, dv.channels);
+          if (blobNames) {
+            dv.outNames = blobNames;
+            dv.nameEditable = true;  // packed blob (dimmer/DALI) — names
+            dv.nameFormat = 'blob';
+            if (hasAcTable(img, dv.channels)) {
+              // DALI/dimmer: area/channel live in the fixed binary table (not the text blob)
+              dv.outArea = readAcAreas(img, dv.channels);
+              dv.outChan = readAcChans(img, dv.channels);
+              dv.acEditable = true;
+            } else {
+              dv.acEditable = false;
+            }
+          }
+        }
+      }
+    }
+    return job;
+  }
+
+  function xmlAttrEsc(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function setTagAttr(tag, name, val) {
+    var re = new RegExp('(\\s' + name + '=")[^"]*(")');
+    return re.test(tag) ? tag.replace(re, '$1' + xmlAttrEsc(val) + '$2') : tag.replace(/\s*(\/?)>$/, ' ' + name + '="' + xmlAttrEsc(val) + '"$1>');
+  }
+
+  /* Move a device output (PhysicalChannel) to a different Area/Channel inside the XML text.
+     mv = { duid, pc, toArea, toCh }  — assign to an existing channel, or
+     mv = { duid, pc, toArea, newName } — create a NEW channel in the area and assign to it.
+     Returns the new text (or null if not applied). */
+  function moveOutput(text, mv) {
+    var duidU = String(mv.duid).toUpperCase();
+    var pcEl = '<PhysicalChannel channel="' + mv.pc + '" duid="' + duidU + '"/>';
+    var idx = text.indexOf(pcEl);
+    if (idx < 0) { pcEl = '<PhysicalChannel channel="' + mv.pc + '" duid="' + mv.duid + '"/>'; idx = text.indexOf(pcEl); }
+    if (idx < 0) return null;
+    var rmEnd = idx + pcEl.length; if (text.charAt(rmEnd) === '\n') rmEnd++;
+    text = text.slice(0, idx) + text.slice(rmEnd);
+    // find the target <Area id=toArea> opening tag
+    var areaRe = new RegExp('<Area\\s[^>]*\\sid="' + mv.toArea + '"[^>]*>', 'g'), am, areaTag = null, bodyStart = -1;
+    while ((am = areaRe.exec(text))) { if (am[0].slice(-2) === '/>') continue; areaTag = am[0]; bodyStart = areaRe.lastIndex; break; }
+    if (areaTag == null) return null;
+    var aEnd = text.indexOf('</Area>', bodyStart);
+    if (aEnd < 0) return null;
+    var body = text.slice(bodyStart, aEnd);
+
+    if (mv.newName != null) {
+      // create a new channel at the next free id, assign the output to it
+      var maxId = 0, cm2;
+      var chIdRe = /<Channel\s[^>]*\sid="(\d+)"[^>]*>/g;
+      while ((cm2 = chIdRe.exec(body))) { if (+cm2[1] > maxId) maxId = +cm2[1]; }
+      var newId = maxId + 1;
+      var newCh = '<Channel type="1" name="' + xmlAttrEsc(mv.newName) + '" category="Lighting" user_modified="true" inherited_name="false" id="' + newId + '">\n' + pcEl + '\n</Channel>\n';
+      text = text.slice(0, bodyStart) + '\n' + newCh + text.slice(bodyStart);
+      // bump channel_count on the area tag
+      var newAreaTag = areaTag.replace(/channel_count="(\d+)"/, function (m, n) { return 'channel_count="' + (+n + 1) + '"'; });
+      text = text.slice(0, am.index) + newAreaTag + text.slice(am.index + areaTag.length);
+      // ensure the device is listed in the area
+      var aEnd2 = text.indexOf('</Area>', text.indexOf(newAreaTag));
+      var body2 = text.slice(text.indexOf(newAreaTag), aEnd2);
+      if (body2.indexOf('<Device duid="' + duidU + '"/>') < 0 && body2.indexOf('<Device duid="' + mv.duid + '"/>') < 0) {
+        text = text.slice(0, aEnd2) + '<Device duid="' + duidU + '"/>\n' + text.slice(aEnd2);
+      }
+      return text;
+    }
+
+    // assign to an existing channel (optionally renaming it), or create it at the chosen id
+    var cm = new RegExp('<Channel\\s[^>]*\\sid="' + mv.toCh + '"[^>]*>').exec(body);
+    if (cm) {
+      var chStart = bodyStart + cm.index, chTag = cm[0], newTag = chTag;
+      if (mv.name != null && mv.name !== '') {
+        newTag = setTagAttr(setTagAttr(setTagAttr(chTag, 'name', mv.name), 'user_modified', 'true'), 'inherited_name', 'false');
+      }
+      text = text.slice(0, chStart) + newTag + text.slice(chStart + chTag.length);
+      var insAt = chStart + newTag.length;
+      return text.slice(0, insAt) + '\n' + pcEl + text.slice(insAt);
+    }
+    // channel id not present in the area → create it at that exact id
+    var nm = mv.name || '';
+    var newCh2 = '<Channel type="1" name="' + xmlAttrEsc(nm) + '" category="Lighting" user_modified="' + (nm ? 'true' : 'false') + '" inherited_name="' + (nm ? 'false' : 'true') + '" id="' + mv.toCh + '">\n' + pcEl + '\n</Channel>\n';
+    text = text.slice(0, bodyStart) + '\n' + newCh2 + text.slice(bodyStart);
+    var at = text.indexOf(areaTag) < 0 ? -1 : 0;
+    var newAreaTag2 = areaTag.replace(/channel_count="(\d+)"/, function (m, n) { return 'channel_count="' + (+n + 1) + '"'; });
+    text = text.slice(0, am.index) + newAreaTag2 + text.slice(am.index + areaTag.length);
+    var aE = text.indexOf('</Area>', text.indexOf(newAreaTag2));
+    var bd = text.slice(text.indexOf(newAreaTag2), aE);
+    if (bd.indexOf('<Device duid="' + duidU + '"/>') < 0 && bd.indexOf('<Device duid="' + mv.duid + '"/>') < 0) {
+      text = text.slice(0, aE) + '<Device duid="' + duidU + '"/>\n' + text.slice(aE);
+    }
+    return text;
+  }
+
+  /* Apply structural moves and channel-name edits to a .dlj, return new zip bytes.
+     moves: [{duid, pc, toArea, toCh}]   names: {"area:channel": "new name"} */
+  async function applyEdits(buf, moves, names, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    var text = decodeXmlBytes(await f.async('uint8array'));
+    var moved = 0;
+    (moves || []).forEach(function (mv) {
+      var t = moveOutput(text, mv);
+      if (t != null) { text = t; moved++; }
+    });
+    var renamed = 0;
+    names = names || {};
+    var outText = '', pos = 0, areaRe = /<Area\s[^>]*>/g, m;
+    while ((m = areaRe.exec(text))) {
+      var aid = (/\sid="(\d+)"/.exec(m[0]) || [])[1];
+      if (m[0].slice(-2) === '/>') continue;
+      var end = text.indexOf('</Area>', areaRe.lastIndex);
+      if (end < 0) break;
+      var body = text.slice(areaRe.lastIndex, end);
+      var nb = body.replace(/<Channel\s[^>]*>/g, function (tag) {
+        var cid = (/\sid="(\d+)"/.exec(tag) || [])[1], key = aid + ':' + cid;
+        if (!(key in names)) return tag;
+        var cur = (/\sname="([^"]*)"/.exec(tag) || [, ''])[1];
+        var want = xmlAttrEsc(names[key] == null ? '' : names[key]);
+        if (cur === want) return tag;
+        renamed++;
+        tag = setTagAttr(tag, 'name', names[key] == null ? '' : names[key]);
+        tag = setTagAttr(tag, 'user_modified', 'true');
+        return setTagAttr(tag, 'inherited_name', 'false');
+      });
+      if (nb !== body) { outText += text.slice(pos, areaRe.lastIndex) + nb; pos = end; }
+      areaRe.lastIndex = end;
+    }
+    var xml = outText + text.slice(pos);
+    var out = new Uint8Array(2 + xml.length * 2);
+    out[0] = 0xff; out[1] = 0xfe;
+    for (var i = 0; i < xml.length; i++) { var cc = xml.charCodeAt(i); out[2 + i * 2] = cc & 0xff; out[3 + i * 2] = cc >> 8; }
+    zip.file(f.name, out);
+    var bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: bytes, changed: renamed + moved, renamed: renamed, moved: moved };
+  }
+
+  /* Back-compat: rename channels only. */
+  async function applyChannelNames(buf, edits, JSZipLib) {
+    return applyEdits(buf, [], edits, JSZipLib);
+  }
+
+  /* Write per-output Area + Channel into each controller's EEPROM image (target.hex) — the
+     fields System Builder's Outputs tab reads. acEdits = { "<DUID>": { "<outputIndex>": {area, chan} } }
+     where chan is 1-based (as shown to the user). */
+  async function applyOutputAreaChan(buf, acEdits, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    var changed = 0;
+    for (var duid in acEdits) {
+      var tf = zip.file('Current/Devices/' + duid + '.target.hex') || zip.file(new RegExp(duid + '\\.target\\.hex$', 'i'))[0];
+      if (!tf) continue;
+      var img = await tf.async('uint8array');
+      var isTable = hasNameTable(img);
+      var isBlobAc = !isTable && hasAcTable(img, 64);
+      if (!isTable && !isBlobAc) continue;
+      var sfA = zip.file('Current/Devices/' + duid + '.source.hex') || zip.file(new RegExp(duid + '\\.source\\.hex$', 'i'))[0];
+      var srcA = sfA ? await sfA.async('uint8array') : null;
+      var flfA = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
+      var flagsA = flfA ? await flfA.async('uint8array') : null;
+      var touched = false, outs = acEdits[duid];
+      for (var k in outs) {
+        var i = +k, e = outs[k];
+        if (isTable) {
+          // relay: area 16-bit BE @0xA0+2i, channel (0-based) 16-bit BE @0xB8+2i
+          if (e.area != null) { var a = e.area & 0xffff; img[AREA_BASE + 2 * i] = (a >> 8) & 0xff; img[AREA_BASE + 2 * i + 1] = a & 0xff; markPending(srcA, flagsA, AREA_BASE + 2 * i, 2); }
+          if (e.chan != null) { var c = (e.chan - 1) & 0xffff; img[CHAN_BASE + 2 * i] = (c >> 8) & 0xff; img[CHAN_BASE + 2 * i + 1] = c & 0xff; markPending(srcA, flagsA, CHAN_BASE + 2 * i, 2); }
+        } else {
+          // DALI/dimmer: 14-byte record @base+14i — marker 0xFD, area 16-bit LE @+2, channel 1 byte @+4
+          var m = acTableBase(img) + i * AC_STRIDE;
+          img[m + AC_MARK] = 0xfd; markPending(srcA, flagsA, m + AC_MARK, 1);
+          if (e.area != null) { var a2 = e.area & 0xffff; img[m + AC_AREA] = a2 & 0xff; img[m + AC_AREA + 1] = (a2 >> 8) & 0xff; markPending(srcA, flagsA, m + AC_AREA, 2); }
+          if (e.chan != null) { img[m + AC_CHAN] = e.chan & 0xff; markPending(srcA, flagsA, m + AC_CHAN, 1); }
+        }
+        touched = true; changed++;
+      }
+      if (touched) { zip.file(tf.name, img); if (sfA && srcA) zip.file(sfA.name, srcA); if (flfA && flagsA) zip.file(flfA.name, flagsA); }
+    }
+    var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: outBytes, changed: changed };
+  }
+
+  /* Write per-output names into each controller's EEPROM image (target.hex).
+     edits = { "<DUID>": { "<outputIndex>": "name", ... }, ... }  (outputIndex is 0-based)
+     This is the field System Builder's Outputs tab and the hardware actually use. */
+  // Edit one PCn= name inside the packed blob (dimmer/DALI). Updates both length bytes and the
+  // parallel flags array. Returns true if written. ff/flags are modified in place.
+  function writeBlobName(img, source, flags, pcNum, name) {
+    var B = findBlob(img); if (!B) return false;
+    var parsed = parseBlobSegs(img, B.textStart);
+    var oldTextLen = parsed.textEnd - B.textStart, found = false;
+    var ns = parsed.segs.map(function (s) {
+      if (s.indexOf('PC' + pcNum + '=') === 0) { found = true; return 'PC' + pcNum + '=' + win1255AsLatin(name); }
+      return s;
+    });
+    if (!found) return false;
+    var newText = ns.join('\x00') + '\x00';
+    var enc = []; for (var i = 0; i < newText.length; i++) enc.push(newText.charCodeAt(i) & 0xff);
+    var delta = oldTextLen - enc.length; // >0 shrink, <0 grow
+    // capacity guard: don't grow past the blob region (overall length byte is 8-bit here)
+    if (img[B.overallLenOff] - delta > 0xff || img[B.blobLenOff] - delta > 0xff) return false;
+    for (var p = 0; p < enc.length; p++) img[B.textStart + p] = enc[p];
+    img[B.blobLenOff] = img[B.blobLenOff] - delta;
+    img[B.overallLenOff] = img[B.overallLenOff] - delta;
+    if (flags) { // 0x06 per text byte; zero the freed tail when shrinking
+      for (var q = enc.length; q < oldTextLen; q++) flags[B.textStart + q] = 0x00;
+      for (var r = oldTextLen; r < enc.length; r++) flags[B.textStart + r] = 0x06;
+    }
+    // put the live text + the two length bytes into "pending download" state
+    markPending(source, flags, B.textStart, enc.length);
+    markPending(source, flags, B.blobLenOff, 1);
+    markPending(source, flags, B.overallLenOff, 1);
+    return true;
+  }
+  // Encode a JS string to a latin1 string whose char codes are the win1255 bytes.
+  function win1255AsLatin(s) { var b = win1255Encode(String(s == null ? '' : s)), o = ''; for (var i = 0; i < b.length; i++) o += String.fromCharCode(b[i]); return o; }
+
+  /* Put a range into System Builder's "modified, pending download" state so the
+     "needs download" indicator lights and the user can push just these bytes.
+     Verified empirically from a System-Builder-edited controller: every pending byte
+     has  target = new value,  source = 0xFF (erased = "not confirmed on device"),
+     flag = 0x07 (0x06 managed/in-sync  OR  the 0x01 dirty bit).
+     Setting only the flag is not enough — SB re-derives the state on load and needs the
+     source byte erased to 0xFF. After a real download SB restores source = target, flag = 0x06.
+     Background bytes (flag 0x01) and free holes (0x00) are left untouched. */
+  function markPending(source, flags, off, len) {
+    for (var i = 0; i < len; i++) {
+      var p = off + i;
+      if (p < 0) continue;
+      if (source && p < source.length) source[p] = 0xff;
+      if (flags && p < flags.length && (flags[p] & 0x04)) flags[p] |= 0x01;
+    }
+  }
+
+  async function applyOutputNames(buf, edits, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    var changed = 0;
+    for (var duid in edits) {
+      var tf = zip.file('Current/Devices/' + duid + '.target.hex') || zip.file(new RegExp(duid + '\\.target\\.hex$', 'i'))[0];
+      if (!tf) continue;
+      var img = await tf.async('uint8array');
+      var outs = edits[duid], touched = false;
+      var sfN = zip.file('Current/Devices/' + duid + '.source.hex') || zip.file(new RegExp(duid + '\\.source\\.hex$', 'i'))[0];
+      var srcN = sfN ? await sfN.async('uint8array') : null;
+      var flfN = zip.file('Current/Devices/' + duid + '.flags.hex') || zip.file(new RegExp(duid + '\\.flags\\.hex$', 'i'))[0];
+      var flagsN = flfN ? await flfN.async('uint8array') : null;
+      if (hasNameTable(img)) {
+        // fixed-width table (relay) — erase source + set dirty flags → System Builder flags a download
+        for (var k in outs) {
+          var i = +k, off = nameOffset(i);
+          if (img[off + NAME_LEN] !== 0x00) continue;
+          var bytes = win1255Encode(String(outs[k] == null ? '' : outs[k])).slice(0, NAME_LEN);
+          for (var j = 0; j < NAME_LEN; j++) img[off + j] = j < bytes.length ? bytes[j] : 0x20;
+          img[off + NAME_LEN] = 0x00;
+          markPending(srcN, flagsN, off, NAME_LEN + 1);
+          touched = true; changed++;
+        }
+      } else if (findBlob(img)) {
+        // packed blob (dimmer/DALI)
+        for (var k2 in outs) {
+          if (writeBlobName(img, srcN, flagsN, (+k2) + 1, outs[k2])) { touched = true; changed++; }
+        }
+      }
+      if (touched) {
+        zip.file(tf.name, img);
+        if (sfN && srcN) zip.file(sfN.name, srcN);
+        if (flfN && flagsN) zip.file(flfN.name, flagsN);
+      }
+    }
+    var outBytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: outBytes, changed: changed };
+  }
+
+  /* Mark the given controllers "modified, pending download" in JobData.xml so System
+     Builder lights the download indicator. Verified against a System-Builder-edited
+     controller: the device's DyNetDevice block carries, right before </DyNetDevice>,
+         <DeviceStatus><Status><Modified/></Status><Status><PendingUpdates/></Status></DeviceStatus>
+     whereas an in-sync controller has an empty <DeviceStatus/>. This is the ACTUAL trigger
+     for the indicator — the hex dirty flags alone are not enough. We only replace the empty
+     self-closing form, and only inside the DeviceData block (the one holding <DyNetDevice>). */
+  var DEVICE_STATUS_PENDING =
+    '<DeviceStatus>\n<Status>\n<Modified/>\n</Status>\n<Status>\n<PendingUpdates/>\n</Status>\n</DeviceStatus>';
+  async function applyDeviceStatus(buf, duids, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    if (!duids || !duids.length) return { bytes: buf, changed: 0 };
+    var zip = await Z.loadAsync(buf);
+    var f = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    if (!f) return { bytes: buf, changed: 0 };
+    var text = decodeXmlBytes(await f.async('uint8array'));
+    var changed = 0;
+    duids.forEach(function (duid) {
+      // locate the DeviceData <Device duid="X"> ... </Device> block (the one with <DyNetDevice>)
+      var open = '<Device duid="' + String(duid).toUpperCase() + '">';
+      var idx = text.indexOf(open);
+      if (idx < 0) { open = '<Device duid="' + duid + '">'; idx = text.indexOf(open); }
+      while (idx >= 0) {
+        var end = text.indexOf('</Device>', idx);
+        if (end < 0) break;
+        var block = text.slice(idx, end);
+        if (block.indexOf('<DyNetDevice') >= 0 && block.indexOf('<DeviceStatus/>') >= 0) {
+          var nb = block.replace('<DeviceStatus/>', DEVICE_STATUS_PENDING);
+          text = text.slice(0, idx) + nb + text.slice(end);
+          changed++;
+          break;
+        }
+        idx = text.indexOf(open, idx + open.length);
+      }
+    });
+    if (changed) {
+      var out = new Uint8Array(2 + text.length * 2);
+      out[0] = 0xff; out[1] = 0xfe;
+      for (var i = 0; i < text.length; i++) { var cc = text.charCodeAt(i); out[2 + i * 2] = cc & 0xff; out[3 + i * 2] = cc >> 8; }
+      zip.file(f.name, out);
+    }
+    var bytes = changed ? await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } }) : buf;
+    return { bytes: bytes, changed: changed };
+  }
+
+  /* Build the EEPROM write plan to flash one controller: the bytes the file marks "modified,
+     pending download" (flag 0x07 = managed+dirty, bit2|bit0), grouped into contiguous runs and
+     split into <=15-byte chunks, carrying the TARGET (desired) values. This is exactly the set
+     System Builder writes on "Save To Device". Returns { dcode, box, chunks:[{addr,data}], dirty }. */
+  async function deviceFlashChunks(buf, duid, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
+    var tf = pick('target'), ff = pick('flags'), sf = pick('source');
+    if (!tf || !ff || !sf) return null;
+    var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array'), src = await sf.async('uint8array');
+    var box = (src.length > 2) ? src[2] : tgt[2];
+    // System Builder's "Save To Device" writes every MANAGED byte (flag bit 0x04) whose desired
+    // value (target) differs from what it last knew is on the device (source) — NOT just the ones
+    // flagged "modified". Verified byte-for-byte against SB flash captures. Group into <=15-byte runs.
+    var dirty_byte = function (i) { return (fl[i] & 0x04) && src[i] !== tgt[i]; };
+    var chunks = [], dirty = 0, N = Math.min(tgt.length, fl.length, src.length), i = 0;
+    while (i < N) {
+      if (dirty_byte(i)) {
+        var start = i;
+        while (i < N && dirty_byte(i) && (i - start) < 15) i++;
+        chunks.push({ addr: start, data: tgt.slice(start, i) });
+        dirty += (i - start);
+      } else i++;
+    }
+    return { dcode: tgt[0], box: box, chunks: chunks, dirty: dirty };
+  }
+
+  /* A FULL config download: every managed byte (flag bit 0x04), target value — for controllers
+     System Builder marks pending even though source==target (nothing incrementally dirty). This
+     is what SB's "Save To Device" writes in that case. Grouped into <=15-byte runs. */
+  async function deviceFullChunks(buf, duid, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
+    var tf = pick('target'), ff = pick('flags'), sf = pick('source');
+    if (!tf || !ff) return null;
+    var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array');
+    var src = sf ? await sf.async('uint8array') : tgt;
+    var box = (src.length > 2) ? src[2] : tgt[2];
+    var managed = function (i) { return (fl[i] & 0x04); };
+    var chunks = [], count = 0, N = Math.min(tgt.length, fl.length), i = 0;
+    while (i < N) {
+      if (managed(i)) { var start = i; while (i < N && managed(i) && (i - start) < 15) i++; chunks.push({ addr: start, data: tgt.slice(start, i) }); count += (i - start); }
+      else i++;
+    }
+    return { dcode: tgt[0], box: box, chunks: chunks, dirty: count };
+  }
+
+  /* After a successful flash, bring one controller back to the in-sync state — exactly what
+     System Builder does post "Save To Device": source := target (device now matches), clear the
+     dirty bit on every managed byte (0x07 → 0x06), and empty its <DeviceStatus> in JobData.
+     That makes the "modified / pending updates" indicator disappear. */
+  async function clearDeviceDirty(buf, duid, JSZipLib) {
+    var Z = JSZipLib || JSZip;
+    var zip = await Z.loadAsync(buf);
+    function pick(ext) { return zip.file('Current/Devices/' + duid + '.' + ext + '.hex') || (zip.file(new RegExp(duid + '\\.' + ext + '\\.hex$', 'i'))[0]); }
+    var tf = pick('target'), ff = pick('flags'), sf = pick('source');
+    if (tf && ff && sf) {
+      var tgt = await tf.async('uint8array'), fl = await ff.async('uint8array'), src = await sf.async('uint8array');
+      var n = Math.min(tgt.length, fl.length, src.length), touched = false;
+      // Mark every byte we just flashed as in-sync: source := target, clear the dirty bit.
+      for (var i = 0; i < n; i++) { if ((fl[i] & 0x04) && src[i] !== tgt[i]) { src[i] = tgt[i]; fl[i] &= 0xFE; touched = true; } }
+      if (touched) { zip.file(sf.name, src); zip.file(ff.name, fl); }
+    }
+    var jf = zip.file('Current/JobData.xml') || zip.file(/JobData\.xml$/i)[0];
+    if (jf) {
+      var text = decodeXmlBytes(await jf.async('uint8array'));
+      var open = '<Device duid="' + String(duid).toUpperCase() + '">', idx = text.indexOf(open);
+      if (idx < 0) { open = '<Device duid="' + duid + '">'; idx = text.indexOf(open); }
+      // Match a populated <DeviceStatus>…</DeviceStatus> regardless of whitespace (System Builder
+      // writes CRLF; our own marker writes LF) — a self-closing <DeviceStatus/> is left untouched.
+      var reStatus = /<DeviceStatus>[\s\S]*?<\/DeviceStatus>/;
+      var changed = false;
+      while (idx >= 0) {
+        var end = text.indexOf('</Device>', idx); if (end < 0) break;
+        var block = text.slice(idx, end);
+        if (block.indexOf('<DyNetDevice') >= 0 && reStatus.test(block)) {
+          text = text.slice(0, idx) + block.replace(reStatus, '<DeviceStatus/>') + text.slice(end);
+          changed = true; break;
+        }
+        idx = text.indexOf(open, idx + open.length);
+      }
+      if (changed) {
+        var out = new Uint8Array(2 + text.length * 2); out[0] = 0xff; out[1] = 0xfe;
+        for (var k = 0; k < text.length; k++) { var cc = text.charCodeAt(k); out[2 + k * 2] = cc & 0xff; out[3 + k * 2] = cc >> 8; }
+        zip.file(jf.name, out);
+      }
+    }
+    var bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    return { bytes: bytes };
+  }
+
+  return { parseDljBuffer: parseDljBuffer, parseJob: parseJob, applyChannelNames: applyChannelNames, applyEdits: applyEdits, applyOutputNames: applyOutputNames, applyOutputAreaChan: applyOutputAreaChan, applyDeviceStatus: applyDeviceStatus, deviceFlashChunks: deviceFlashChunks, deviceFullChunks: deviceFullChunks, clearDeviceDirty: clearDeviceDirty };
+})();
+if (typeof module !== 'undefined') module.exports = DLJ;
+
+</script>
+<script>
+/* ── DyNet Remote · Supabase backend module ─────────────────────────────────
+   Thin wrapper over supabase-js (loaded from CDN as window.supabase). Credentials
+   are the project URL + publishable (anon) key — public by design; RLS protects
+   the data. Every call returns a value or throws, and is wrapped by callers.
+
+   Technician: register/login, create a project, save its config, upload the
+   resolved .dlj, assign users. End user: log in, list assigned projects, download
+   a project's config + .dlj, poll its version for updates. */
+const SUPA = {
+  url: 'https://noppsynyjuweftqfhaxw.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vcHBzeW55anV3ZWZ0cWZoYXh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxMjM2MDEsImV4cCI6MjEwODY5OTYwMX0.GtSjrk5uMuEEzt6Dq5iDYSltxodEvsy4MC4Q9lIhHM8'
+};
+const BUCKET = 'projects';
+
+let _sb = null;
+function sbClient(){
+  if(_sb) return _sb;
+  if(!SUPA.url || !window.supabase) return null;
+  _sb = window.supabase.createClient(SUPA.url, SUPA.key, {
+    auth:{ persistSession:true, autoRefreshToken:true, storageKey:'dynet-sb-auth' }
+  });
+  return _sb;
+}
+const sbReady = () => !!sbClient();
+function blobPath(projectId){ return projectId + '/current.dlj'; }
+
+const Backend = {
+  ready: sbReady,
+
+  /* ── auth ── */
+  async signUp(email, password, { full_name='', role='tech' } = {}){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.auth.signUp({ email, password,
+      options:{ data:{ full_name, role } } });
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async signIn(email, password){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async signOut(){ const sb = sbClient(); if(sb) await sb.auth.signOut(); },
+  // Send a password-reset email. The link brings the user back to redirectTo in recovery mode.
+  async resetPassword(email, redirectTo){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.auth.resetPasswordForEmail((email||'').trim(), redirectTo ? { redirectTo } : undefined);
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  // Set a new password (used after the user follows the reset link / while signed in).
+  async updatePassword(newPassword){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.auth.updateUser({ password:newPassword });
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  // Subscribe to auth events (e.g. PASSWORD_RECOVERY when a reset link is opened).
+  onAuth(cb){ const sb = sbClient(); if(sb) sb.auth.onAuthStateChange((e,s)=>cb(e,s)); },
+  async session(){ const sb = sbClient(); if(!sb) return null; const { data } = await sb.auth.getSession(); return data.session; },
+  async me(){
+    const sb = sbClient(); if(!sb) return null;
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) return null;
+    const { data:profile } = await sb.from('profiles').select('*').eq('id', user.id).single();
+    return { user, profile };
+  },
+
+  /* ── technician ── */
+  // Mark the current account as a technician (the admin site calls this on login/registration,
+  // so anyone registering there becomes a tech reliably without manual SQL).
+  async ensureTechProfile(){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) return;
+    await sb.from('profiles').update({ role:'tech' }).eq('id', user.id);
+  },
+  async myProjects(){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('projects').select('*').order('updated_at', { ascending:false });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createProject({ name, dropbox_folder=null, file_name=null, file_rev=null, config={} }){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('projects')
+      .insert({ owner:user.id, name, dropbox_folder, file_name, file_rev, config })
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  // Save config and/or the current file metadata, and bump version so user apps re-pull.
+  async saveProject(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:cur } = await sb.from('projects').select('version').eq('id', id).single();
+    const next = ((cur && cur.version) || 0) + 1;
+    const { data, error } = await sb.from('projects')
+      .update(Object.assign({}, fields, { version:next, updated_at:new Date().toISOString() }))
+      .eq('id', id).select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async uploadBlob(projectId, bytes){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const body = bytes instanceof Blob ? bytes : new Blob([bytes], { type:'application/octet-stream' });
+    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream' });
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  async assignUserByEmail(projectId, email){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser();
+    const { data:prof, error:e1 } = await sb.from('profiles').select('id,email').ilike('email', email.trim()).maybeSingle();
+    if(e1) throw new Error(e1.message);
+    if(!prof) throw new Error('לא נמצא משתמש עם המייל הזה. בקש ממנו להירשם קודם.');
+    const { data, error } = await sb.from('assignments')
+      .insert({ project_id:projectId, user_id:prof.id, assigned_by:user.id })
+      .select().single();
+    if(error){ if(/duplicate|unique/i.test(error.message)) throw new Error('המשתמש כבר משויך לפרויקט.'); throw new Error(error.message); }
+    return data;
+  },
+  async unassign(assignmentId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('assignments').delete().eq('id', assignmentId);
+    if(error) throw new Error(error.message);
+  },
+  // Store the team's Dropbox refresh token server-side so the scheduled sync function can use it.
+  async saveDropboxAuth(refresh){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    if(!refresh) return;
+    const { error } = await sb.from('integrations').upsert({ id:'dropbox', dropbox_refresh:refresh, updated_at:new Date().toISOString() });
+    if(error) throw new Error(error.message);
+  },
+  // Trigger the server-side Dropbox sync (checks the folder for a newer file and updates the project).
+  async syncDropbox(projectId){
+    const sb = sbClient(); if(!sb) return null;
+    try{ const { data } = await sb.functions.invoke('sync-dropbox', { body:{ project_id:projectId||null } }); return data; }
+    catch(e){ return null; }
+  },
+  async allUsers(){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('profiles').select('id,email,full_name,role').eq('role','user').order('created_at',{ascending:false});
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async projectUsers(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('assignments')
+      .select('id,user_id,created_at,profiles:user_id(email,full_name)')
+      .eq('project_id', projectId);
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+
+  /* ── end user ── */
+  async assignedProjects(){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('projects').select('*').order('updated_at', { ascending:false });
+    if(error) throw new Error(error.message);   // RLS returns only projects assigned to this user
+    return data || [];
+  },
+  async projectVersion(projectId){
+    const sb = sbClient(); if(!sb) return null;
+    const { data } = await sb.from('projects').select('version').eq('id', projectId).single();
+    return data ? data.version : null;
+  },
+  async downloadBlob(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.storage.from(BUCKET).download(blobPath(projectId));
+    if(error) throw new Error(error.message);
+    return await data.arrayBuffer();
+  }
+};
+
+</script>
+<script>
+/* Dropbox for the admin website (browser). PKCE auth with the paste-the-code flow (no redirect URI),
+   folder browsing, and newest-.dlj resolution — the same logic the app uses, standalone here. */
+const Dbx = (function(){
+  const APP_KEY = '0lg7wbsl4j5px1t';
+  const SKEY = 'dnr.dbx', VKEY = 'dnr.dbxVerifier';
+  const sget = (k,d)=>{ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } };
+  const sset = (k,v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+  const sdel = k=>{ try{ localStorage.removeItem(k); }catch(e){} };
+  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const dbxArg = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+
+  function fileDateKey(e){
+    const m=(e.name||'').match(/(\d{1,2})[.\-_\/ ](\d{1,2})[.\-_\/ ](\d{2,4})(?!\d)/);
+    if(m){ let d=+m[1],mo=+m[2],y=+m[3]; if(mo>12&&d<=12){const t=d;d=mo;mo=t;} if(y<100)y+=2000;
+      if(d>=1&&d<=31&&mo>=1&&mo<=12) return Date.UTC(y,mo-1,d); }
+    return e.server_modified?Date.parse(e.server_modified):0;
+  }
+  async function authUrl(){
+    const v=b64url(crypto.getRandomValues(new Uint8Array(48)));
+    const ch=b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
+    sset(VKEY, v);
+    const p={ client_id:APP_KEY, response_type:'code', code_challenge:ch, code_challenge_method:'S256', token_access_type:'offline' };
+    const u=new URL('https://www.dropbox.com/oauth2/authorize'); u.search=new URLSearchParams(p); return u.toString();
+  }
+  async function exchange(code){
+    const p={ code:(code||'').trim(), grant_type:'authorization_code', client_id:APP_KEY, code_verifier:sget(VKEY,'') };
+    const r=await fetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams(p) });
+    const j=await r.json(); if(!r.ok) throw new Error(j.error_description||'הקוד לא התקבל. נסה שוב.');
+    sset(SKEY, { access:j.access_token, refresh:j.refresh_token, exp:Date.now()+j.expires_in*1000 }); sdel(VKEY);
+  }
+  async function token(){
+    const t=sget(SKEY,null); if(!t) return null;
+    if(Date.now() < t.exp-60000) return t.access;
+    if(!t.refresh) return null;
+    let r,j; try{ r=await fetch('https://api.dropboxapi.com/oauth2/token', { method:'POST', body:new URLSearchParams({ grant_type:'refresh_token', refresh_token:t.refresh, client_id:APP_KEY }) }); j=await r.json(); }catch(e){ return null; }
+    if(!r.ok){ if(j&&(j.error==='invalid_grant'||j.error==='invalid_client')) sdel(SKEY); return null; }
+    t.access=j.access_token; t.exp=Date.now()+j.expires_in*1000; if(j.refresh_token) t.refresh=j.refresh_token; sset(SKEY,t); return t.access;
+  }
+  async function api(ep, args){
+    const tok=await token(); if(!tok) throw new Error('יש להתחבר ל-Dropbox');
+    const r=await fetch('https://api.dropboxapi.com/2/'+ep, { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/json' }, body:JSON.stringify(args) });
+    if(!r.ok) throw new Error('Dropbox '+r.status+': '+(await r.text()).slice(0,120)); return r.json();
+  }
+  async function listFolder(path){
+    let res=await api('files/list_folder', { path:path||'', limit:500 }), entries=res.entries;
+    while(res.has_more){ res=await api('files/list_folder/continue', { cursor:res.cursor }); entries=entries.concat(res.entries); }
+    return entries;
+  }
+  async function browse(path){
+    let entries=(await listFolder(path)).filter(e=>e['.tag']==='folder' || /\.dlj$/i.test(e.name));
+    entries.sort((a,b)=>{ if(a['.tag']!==b['.tag']) return a['.tag']==='folder'?-1:1;
+      if(a['.tag']==='folder') return a.name.localeCompare(b.name,'he');
+      const ka=fileDateKey(a),kb=fileDateKey(b); return kb!==ka?kb-ka:(b.server_modified||'').localeCompare(a.server_modified||''); });
+    return entries;
+  }
+  async function newestInFolder(folder){
+    let entries=(await listFolder(folder)).filter(e=>e['.tag']==='file' && /\.dlj$/i.test(e.name));
+    if(!entries.length) return null;
+    entries.sort((a,b)=>{ const ka=fileDateKey(a),kb=fileDateKey(b); return kb!==ka?kb-ka:(b.server_modified||'').localeCompare(a.server_modified||''); });
+    return entries[0];
+  }
+  async function searchFolders(q){
+    const res=await api('files/search_v2', { query:q, options:{ max_results:100, file_status:'active', filename_only:true } });
+    const seen={};
+    return (res.matches||[]).map(m=>m.metadata&&m.metadata.metadata)
+      .filter(md=>md&&md['.tag']==='folder'&&md.path_lower&&!seen[md.path_lower]&&(seen[md.path_lower]=1));
+  }
+  async function download(path){
+    const tok=await token(); if(!tok) throw new Error('יש להתחבר ל-Dropbox');
+    const r=await fetch('https://content.dropboxapi.com/2/files/download', { method:'POST', headers:{ Authorization:'Bearer '+tok, 'Dropbox-API-Arg':dbxArg({ path }) } });
+    if(!r.ok) throw new Error('ההורדה נכשלה ('+r.status+')'); return r.arrayBuffer();
+  }
+  const getRefresh = () => { const t=sget(SKEY,null); return t && t.refresh || null; };
+  return { connected:()=>!!sget(SKEY,null), authUrl, exchange, browse, searchFolders, newestInFolder, download, getRefresh, logout:()=>sdel(SKEY) };
+})();
+
+</script>
+<script>
+/* DyNet · technician admin website.
+   Runs in a normal browser. The technician logs in, creates projects, uploads the project's
+   .dlj (stored on the server), sets per-project config (room names, A/C on/off), and assigns
+   end users to projects. The user app reads all of this from the server. */
+(function(){
+'use strict';
+const $ = s => document.querySelector(s);
+const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls) e.className=cls; if(html!=null) e.innerHTML=html; return e; };
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let _t; function toast(msg, ms){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(_t); _t=setTimeout(()=>t.hidden=true, ms||3500); }
+
+/* ---- room classification (mirrors the user app) ---- */
+const heNorm = s => (s||'').toLowerCase().replace(/ך/g,'כ').replace(/ם/g,'מ').replace(/ן/g,'נ').replace(/ף/g,'פ').replace(/ץ/g,'צ');
+const SYS_WORDS = ['וילון','צלון','סוכך','תריס','שאטר','חימום','פרגולה','רשת','חלון חשמלי','שער','גליל','curtain','shade','awning','blind','shutter','heating','pergola','screen','gate','roller'];
+const AC_WORDS = ['מיזוג','מזגן','מזוג','hvac','climate'];
+const isAC = s => { const n=heNorm(s); return AC_WORDS.some(w=>n.includes(heNorm(w))) || /\ba\/?c\b/.test(n); };
+const isSys = s => { const n=heNorm(s); return isAC(s) || SYS_WORDS.some(w=>n.includes(heNorm(w))); };
+// Lighting rooms grouped by floor, from the parsed project tree (systems/AC excluded).
+function lightingFloors(P){
+  const floors=[];
+  (function walk(node, floor, sysCtx){
+    (node.children||[]).forEach(c=>{
+      if(c.type==='folder') walk(c, floor||c.name, sysCtx || isSys(c.name));
+      else if(c.type==='area'){
+        const a=P.areas[c.id]; if(!a) return;
+        if(sysCtx || isSys(a.name||'')) return;        // skip curtains / A/C etc.
+        const fn=floor||'כללי'; let fl=floors.find(x=>x.floor===fn); if(!fl){ fl={floor:fn,rooms:[]}; floors.push(fl); }
+        fl.rooms.push(a);
+      }
+    });
+  })(P.tree,'',false);
+  return floors;
+}
+
+/* ---- state ---- */
+const state = { me:null, projects:[], sel:null, parsed:null, users:[], assigned:[], q:'' };
+const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95 }, (p && p.config) || {});
+
+/* ---- boot ---- */
+function renderNewPassword(){
+  $('#whoami').textContent='';
+  $('#app').innerHTML = `<div class="card" style="max-width:420px;margin:30px auto">
+    <h2>בחירת סיסמה חדשה</h2>
+    <div class="note">הגעת מקישור איפוס. בחר סיסמה חדשה (6 תווים לפחות).</div>
+    <div class="field"><label>סיסמה חדשה</label><input id="np" class="ltr" type="password" autocomplete="new-password"></div>
+    <div class="row"><button class="btn primary" id="setpw">שמור סיסמה</button></div></div>`;
+  $('#setpw').onclick = async e => { const v=$('#np').value; if(v.length<6) return toast('6 תווים לפחות'); e.target.disabled=true;
+    try{ await Backend.updatePassword(v); toast('הסיסמה עודכנה ✅',5000); setTimeout(()=>{ location.hash=''; location.reload(); },1200); }
+    catch(err){ toast(err.message||'העדכון נכשל',6000); e.target.disabled=false; } };
+}
+async function boot(){
+  if(!Backend.ready()){ $('#app').innerHTML = `<div class="card"><div class="note">אין חיבור לשרת. בדוק אינטרנט ורענן.</div></div>`; return; }
+  // If the user arrived via a password-reset link, show the new-password form.
+  if(/type=recovery/.test(location.hash||'')){ Backend.onAuth((ev)=>{ if(ev==='PASSWORD_RECOVERY') renderNewPassword(); }); renderNewPassword(); return; }
+  let who=null; try{ who = await Backend.me(); }catch(e){}
+  state.me = who;
+  if(!who || !who.user){ return renderLogin(); }
+  // This is the technician site — make sure the account is marked as a technician.
+  if(!who.profile || who.profile.role !== 'tech'){ try{ await Backend.ensureTechProfile(); }catch(e){} }
+  $('#whoami').textContent = who.user.email + ' · טכנאי';
+  await loadProjects();
+  renderDash();
+}
+
+/* ---- login / register ---- */
+function renderLogin(){
+  $('#whoami').textContent='';
+  $('#app').innerHTML = `<div class="card" style="max-width:420px;margin:30px auto">
+    <h2>כניסת טכנאי</h2>
+    <div class="note">התחבר או הירשם כטכנאי כדי לנהל פרויקטים ומשתמשים.</div>
+    <div class="field"><label>אימייל</label><input id="em" class="ltr" type="email" autocomplete="email"></div>
+    <div class="field"><label>שם (ברישום)</label><input id="nm" autocomplete="name"></div>
+    <div class="field"><label>סיסמה</label><input id="pw" class="ltr" type="password" autocomplete="current-password"></div>
+    <div class="row" style="margin-top:6px"><button class="btn primary" id="login">התחבר</button><button class="btn" id="reg">הרשמה</button></div>
+    <div style="margin-top:12px"><a href="#" id="forgot" class="note" style="text-decoration:underline">שכחת סיסמה?</a></div>
+  </div>`;
+  const em=()=>$('#em').value.trim(), pw=()=>$('#pw').value, nm=()=>$('#nm').value.trim();
+  const net = e => /fetch|network/i.test(e&&e.message||'') ? 'אין חיבור לשרת' : (e&&e.message);
+  $('#forgot').onclick = async e => { e.preventDefault();
+    if(!em()) return toast('הזן קודם את האימייל שלך בשדה למעלה');
+    try{ await Backend.resetPassword(em(), location.href); toast('נשלח אליך מייל לאיפוס סיסמה. בדוק את תיבת הדואר (וגם ספאם).',8000); }
+    catch(err){ toast(net(err)||'השליחה נכשלה',6000); } };
+  $('#login').onclick = async e => { if(!em()||!pw()) return toast('אימייל + סיסמה'); e.target.disabled=true;
+    try{ await Backend.signIn(em(),pw()); location.reload(); }catch(err){ toast(net(err)||'ההתחברות נכשלה',6000); e.target.disabled=false; } };
+  $('#reg').onclick = async e => { if(!em()||pw().length<6) return toast('אימייל + סיסמה (6 תווים לפחות)'); e.target.disabled=true;
+    try{ await Backend.signUp(em(),pw(),{full_name:nm(),role:'tech'}); toast('נרשמת! אם מופעל אימות מייל — אשר ואז התחבר.',7000);
+      try{ await Backend.signIn(em(),pw()); location.reload(); }catch(_){ e.target.disabled=false; } }
+    catch(err){ toast(net(err)||'הרישום נכשל',6000); e.target.disabled=false; } };
+}
+
+/* ---- dashboard ---- */
+async function loadProjects(){ try{ state.projects = await Backend.myProjects(); }catch(e){ toast(e.message,5000); } }
+
+function renderDash(){
+  const app=$('#app'); app.innerHTML='';
+  // projects card
+  const pc = el('div','card');
+  pc.innerHTML = `<h2>כל הפרויקטים</h2>
+    <div class="field" style="margin:0 0 10px"><input id="psearch" type="search" placeholder="🔍 חיפוש לפי שם לקוח / פרויקט" value="${esc(state.q)}" autocomplete="off"></div>
+    <div class="list" id="plist"></div>
+    <div class="row" style="margin-top:12px"><input id="pname" placeholder="שם פרויקט חדש"><button class="btn primary" id="pnew">צור פרויקט</button></div>`;
+  app.appendChild(pc);
+  const pl = pc.querySelector('#plist');
+  fillPlist(pl);
+  const si = pc.querySelector('#psearch');
+  si.addEventListener('input', ()=>{ state.q = si.value; fillPlist(pl); });
+  pc.querySelector('#pnew').onclick = async e=>{
+    const nm=pc.querySelector('#pname').value.trim(); if(!nm) return toast('הזן שם');
+    e.target.disabled=true;
+    try{ const p=await Backend.createProject({name:nm}); toast('נוצר'); await loadProjects(); state.sel=p; state.parsed=null; renderDash(); selectProject(p); }
+    catch(err){ toast(err.message,6000); e.target.disabled=false; }
+  };
+  // logout
+  const foot = el('div','row'); foot.style.marginTop='6px';
+  foot.innerHTML = `<span class="sp" style="flex:1"></span><button class="btn ghost sm" id="out">התנתק</button>`;
+  app.appendChild(foot);
+  foot.querySelector('#out').onclick = async()=>{ await Backend.signOut(); location.reload(); };
+
+  if(state.sel){ const det=el('div'); det.id='detail'; app.insertBefore(det, foot); renderDetail(); }
+}
+
+function fillPlist(pl){
+  pl.innerHTML='';
+  const q = (state.q||'').trim().toLowerCase();
+  const rows = state.projects.filter(p => !q || (p.name||'').toLowerCase().includes(q) || (p.file_name||'').toLowerCase().includes(q));
+  if(!state.projects.length){ pl.appendChild(el('div','note','אין עדיין פרויקטים. צור אחד למטה.')); return; }
+  if(!rows.length){ pl.appendChild(el('div','note','לא נמצא פרויקט שתואם לחיפוש.')); return; }
+  rows.forEach(p=>{
+    const it = el('div','item proj-sel');
+    it.setAttribute('aria-selected', state.sel && state.sel.id===p.id);
+    it.innerHTML = `<div class="nm"><b>${esc(p.name)}</b><small>${p.file_name?esc(p.file_name):'אין קובץ עדיין'} · גרסה ${p.version||1}</small></div>`;
+    it.onclick = ()=> selectProject(p);
+    pl.appendChild(it);
+  });
+}
+async function selectProject(p){ state.sel=p; state.parsed=null; renderDash();
+  // if the project already has a stored file, pull it so we can list rooms
+  if(p.file_name){ try{ const buf=await Backend.downloadBlob(p.id); state.parsed=await DLJ.parseDljBuffer(buf, p.file_name); renderDetail(); }catch(e){ /* blob may be missing */ } }
+}
+
+function renderDetail(){
+  let d=$('#detail'); if(!d) return;
+  const p=state.sel, cfg=cfgOf(p);
+  d.innerHTML='';
+  // --- project file ---
+  const fc=el('div','card');
+  fc.innerHTML = `<h2>קובץ הפרויקט · ${esc(p.name)}</h2>
+    <div class="note">${p.file_name?`קובץ נוכחי: <b>${esc(p.file_name)}</b>${state.parsed?` · ${Object.keys(state.parsed.areas).length} אזורים`:''}`:'עדיין לא הועלה קובץ ‎.dlj‎ לפרויקט הזה.'}</div>
+    <div class="row" style="margin-top:10px"><label class="btn"><input id="dlj" type="file" accept=".dlj" hidden>העלה קובץ ‎.dlj‎ ידנית</label>
+      <span class="note" id="upst"></span></div>
+    <h2 style="margin-top:16px">Dropbox · סנכרון אוטומטי</h2>
+    <div id="dbxhost"></div>`;
+  d.appendChild(fc);
+  renderDbxSection(fc.querySelector('#dbxhost'), p);
+  fc.querySelector('#dlj').onchange = async e=>{
+    const f=e.target.files[0]; if(!f) return; const st=fc.querySelector('#upst');
+    st.innerHTML='מעלה… <span class="spin"></span>';
+    try{
+      const buf=await f.arrayBuffer();
+      const parsed=await DLJ.parseDljBuffer(buf, f.name);
+      await Backend.uploadBlob(p.id, buf);
+      const saved=await Backend.saveProject(p.id, { name:p.name, file_name:f.name, config:cfg });
+      state.sel=saved; state.parsed=parsed; await loadProjects();
+      toast('הקובץ הועלה · '+Object.keys(parsed.areas).length+' אזורים',5000);
+      renderDash(); selectProject(saved);
+    }catch(err){ st.textContent=''; toast(err.message||'ההעלאה נכשלה',6000); }
+  };
+  // --- A/C toggle ---
+  const ac=el('div','card');
+  ac.innerHTML = `<h2>מערכת מיזוג אצל המשתמש</h2>
+    <div class="seg" id="acseg"><button data-ac="1" aria-pressed="${cfg.includeAC}">כלול מיזוג</button>
+      <button data-ac="0" aria-pressed="${!cfg.includeAC}">בלי מיזוג</button></div>`;
+  d.appendChild(ac);
+  ac.querySelectorAll('#acseg button').forEach(b=> b.onclick=async()=>{
+    const on=b.dataset.ac==='1'; const nc=Object.assign({},cfg,{includeAC:on});
+    ac.querySelectorAll('#acseg button').forEach(x=>x.setAttribute('aria-pressed', x===b));
+    try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast(on?'המיזוג יוצג':'המיזוג יוסתר'); }
+    catch(err){ toast(err.message,5000); }
+  });
+  // --- connection (IP addresses + ports) ---
+  const cc=el('div','card');
+  cc.innerHTML = `<h2>חיבור · כתובות IP</h2>
+    <div class="note">הכתובת המקומית ננעלת אצל המשתמש (אפור). את החיצונית המשתמש יכול לערוך. האפליקציה עוברת ביניהן אוטומטית (בבית = מקומית, בחוץ = חיצונית).</div>
+    <div class="row" style="margin-top:10px">
+      <div class="field" style="flex:2"><label>כתובת מקומית (פנימית)</label><input id="locip" class="ltr" placeholder="192.168.1.200" value="${esc(cfg.localBase||'')}"></div>
+      <div class="field" style="flex:1"><label>פורט</label><input id="locport" class="ltr" inputmode="numeric" value="${esc(cfg.localPort||95)}"></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:2"><label>כתובת חיצונית (DDNS / IP ציבורי)</label><input id="extip" class="ltr" placeholder="myhome.ddns.net" value="${esc(cfg.extBase||'')}"></div>
+      <div class="field" style="flex:1"><label>פורט</label><input id="extport" class="ltr" inputmode="numeric" value="${esc(cfg.extPort||95)}"></div>
+    </div>
+    <button class="btn primary" id="saveconn" style="margin-top:6px">שמור כתובות</button>`;
+  d.appendChild(cc);
+  cc.querySelector('#saveconn').onclick=async e=>{
+    const nc=Object.assign({}, cfg, {
+      localBase:(cc.querySelector('#locip').value||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,''),
+      localPort:+cc.querySelector('#locport').value||95,
+      extBase:(cc.querySelector('#extip').value||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,''),
+      extPort:+cc.querySelector('#extport').value||95 });
+    e.target.disabled=true;
+    try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('הכתובות נשמרו'); }
+    catch(err){ toast(err.message,6000); e.target.disabled=false; }
+  };
+  // --- room names ---
+  const rc=el('div','card'); rc.innerHTML = `<h2>שמות חדרים</h2>`;
+  if(!state.parsed){ rc.appendChild(el('div','note','העלה קובץ ‎.dlj‎ כדי לערוך שמות חדרים.')); }
+  else {
+    const floors=lightingFloors(state.parsed);
+    const box=el('div','rooms');
+    floors.forEach(fl=>{
+      box.appendChild(el('div','floorlbl',esc(fl.floor)));
+      fl.rooms.forEach(a=>{
+        const orig=a.name||('אזור '+a.id);
+        const cur=(cfg.names&&cfg.names[a.id])||'';
+        const r=el('div','rn');
+        r.innerHTML = `<input data-area="${a.id}" value="${esc(cur||orig)}" placeholder="${esc(orig)}">`;
+        box.appendChild(r);
+      });
+    });
+    rc.appendChild(box);
+    const save=el('button','btn primary','שמור שמות'); save.style.marginTop='12px';
+    save.onclick=async()=>{
+      const names=Object.assign({}, cfg.names);
+      box.querySelectorAll('input[data-area]').forEach(inp=>{
+        const id=inp.dataset.area; const v=inp.value.trim();
+        const orig=(state.parsed.areas[id]&&state.parsed.areas[id].name)||'';
+        if(!v || v===orig) delete names[id]; else names[id]=v;
+      });
+      const nc=Object.assign({},cfg,{names});
+      save.disabled=true;
+      try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('השמות נשמרו'); renderDetail(); }
+      catch(err){ toast(err.message,6000); save.disabled=false; }
+    };
+    rc.appendChild(save);
+  }
+  d.appendChild(rc);
+  // --- users / assignment ---
+  const uc=el('div','card'); uc.innerHTML = `<h2>משתמשים משויכים לפרויקט</h2><div class="list" id="ulist"><div class="note">טוען… <span class="spin"></span></div></div>
+    <h2 style="margin-top:16px">הוסף משתמש</h2><div class="list" id="alist"></div>`;
+  d.appendChild(uc);
+  loadUsers(uc, p);
+}
+
+/* ---- Dropbox folder linking ---- */
+function renderDbxSection(host, p){
+  host.innerHTML='';
+  if(p.dropbox_folder){
+    host.appendChild(el('div','note',`📂 עוקב אחרי תיקייה: <b class="ltr">${esc(p.dropbox_folder)}</b> — נטען תמיד הקובץ הכי חדש.`));
+    const row=el('div','row'); row.style.marginTop='8px';
+    const ref=el('button','btn sm','רענן לקובץ הכי חדש'); ref.onclick=()=>dbxUseFolder(p, p.dropbox_folder);
+    const chg=el('button','btn ghost sm','שנה תיקייה'); chg.onclick=()=>openDbxPicker(host, p);
+    row.appendChild(ref); row.appendChild(chg); host.appendChild(row);
+  } else {
+    const b=el('button','btn','🔗 חבר Dropbox ובחר תיקייה'); b.onclick=()=>openDbxPicker(host, p); host.appendChild(b);
+  }
+}
+function openDbxPicker(host, p){
+  host.innerHTML='';
+  if(!Dbx.connected()) dbxConnectUI(host, ()=>dbxBrowseUI(host, p, ''));
+  else dbxBrowseUI(host, p, '');
+}
+function dbxConnectUI(host, onDone){
+  host.innerHTML = `<div class="note">חבר את ה-Dropbox שלך פעם אחת: פתח, אשר גישה, והעתק את הקוד ש-Dropbox יציג.</div>
+    <div class="row" style="margin-top:8px"><a class="btn primary" id="dbxOpen" target="_blank" rel="noopener">פתח את Dropbox ואשר</a></div>
+    <div class="row" style="margin-top:8px"><input id="dbxCode" class="ltr" placeholder="הדבק כאן את הקוד מ-Dropbox"><button class="btn" id="dbxOk">אישור</button></div>`;
+  Dbx.authUrl().then(u=>{ const a=host.querySelector('#dbxOpen'); if(a) a.href=u; }).catch(()=>{});
+  host.querySelector('#dbxOk').onclick = async e=>{
+    const code=host.querySelector('#dbxCode').value.trim(); if(!code) return toast('הדבק קוד');
+    e.target.disabled=true;
+    try{ await Dbx.exchange(code); try{ await Backend.saveDropboxAuth(Dbx.getRefresh()); }catch(_){}; toast('מחובר ל-Dropbox'); onDone(); }
+    catch(err){ toast(err.message,6000); e.target.disabled=false; }
+  };
+}
+function dbxBrowseUI(host, p, path){
+  host.innerHTML='';
+  const search=el('div','field'); search.style.margin='0 0 10px';
+  search.innerHTML = `<input id="dbxq" type="search" placeholder="🔍 חיפוש תיקייה בכל ה-Dropbox" autocomplete="off">`;
+  const results=el('div');
+  host.appendChild(search); host.appendChild(results);
+  const qi=search.querySelector('#dbxq');
+  let timer;
+  qi.addEventListener('input', ()=>{ clearTimeout(timer); const q=qi.value.trim();
+    timer=setTimeout(()=> q ? showSearch(results,p,q) : showFolder(results,p,path||''), 350); });
+  showFolder(results, p, path||'');
+}
+async function showFolder(results, p, path){
+  results.innerHTML='<div class="note">טוען תיקייה… <span class="spin"></span></div>';
+  let entries; try{ entries=await Dbx.browse(path||''); }catch(e){ results.innerHTML=`<div class="note">${esc(e.message)}</div>`; return; }
+  results.innerHTML='';
+  results.appendChild(el('div','note ltr',esc(path||'/')));
+  if(path){ const use=el('button','btn primary','📌 השתמש בתיקייה הזו — טען את הקובץ הכי חדש'); use.style.margin='8px 0'; use.style.width='100%';
+    use.onclick=()=>dbxUseFolder(p, path); results.appendChild(use); }
+  const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
+  const list=el('div','list');
+  if(up!==null){ const b=el('div','item'); b.style.cursor='pointer'; b.innerHTML='<div class="nm">↩ תיקייה למעלה</div>'; b.onclick=()=>showFolder(results,p,up); list.appendChild(b); }
+  entries.forEach(e=>{
+    const it=el('div','item'); const folder=e['.tag']==='folder';
+    it.innerHTML = `<div class="nm">${folder?'📁':'📄'} ${esc(e.name)}</div>`;
+    if(folder){ it.style.cursor='pointer'; it.onclick=()=>showFolder(results,p,e.path_lower); }
+    list.appendChild(it);
+  });
+  if(!entries.length) list.appendChild(el('div','note','אין כאן תיקיות או קבצי DLJ.'));
+  results.appendChild(list);
+}
+async function showSearch(results, p, q){
+  results.innerHTML='<div class="note">מחפש… <span class="spin"></span></div>';
+  let folders; try{ folders=await Dbx.searchFolders(q); }catch(e){ results.innerHTML=`<div class="note">${esc(e.message)}</div>`; return; }
+  results.innerHTML='';
+  const list=el('div','list');
+  if(!folders.length){ list.appendChild(el('div','note','לא נמצאו תיקיות.')); }
+  folders.forEach(md=>{
+    const it=el('div','item'); it.style.cursor='pointer';
+    it.innerHTML = `<div class="nm">📁 ${esc(md.name)}<small class="ltr">${esc(md.path_display||'')}</small></div>`;
+    it.onclick=()=>showFolder(results, p, md.path_lower);
+    list.appendChild(it);
+  });
+  results.appendChild(list);
+}
+async function dbxUseFolder(p, folder){
+  toast('מחפש את הקובץ הכי חדש בתיקייה…');
+  try{
+    const newest=await Dbx.newestInFolder(folder);
+    if(!newest) return toast('אין קבצי DLJ בתיקייה הזו',5000);
+    const buf=await Dbx.download(newest.path_lower||newest.id);
+    const parsed=await DLJ.parseDljBuffer(buf, newest.name);
+    await Backend.uploadBlob(p.id, buf);
+    const saved=await Backend.saveProject(p.id, { name:p.name, file_name:newest.name, file_rev:newest.rev, dropbox_folder:folder, config:cfgOf(p) });
+    state.sel=saved; state.parsed=parsed; await loadProjects();
+    toast('נטען מהתיקייה: '+newest.name, 6000);
+    renderDash(); selectProject(saved);
+  }catch(e){ toast(e.message,6000); }
+}
+
+async function loadUsers(uc, p){
+  let assigned=[], all=[];
+  try{ assigned=await Backend.projectUsers(p.id); }catch(e){}
+  try{ all=await Backend.allUsers(); }catch(e){}
+  const ulist=uc.querySelector('#ulist'); ulist.innerHTML='';
+  if(!assigned.length) ulist.appendChild(el('div','note','אין עדיין משתמשים משויכים.'));
+  assigned.forEach(a=>{
+    const prof=a.profiles||{};
+    const it=el('div','item');
+    it.innerHTML = `<div class="nm"><b>${esc(prof.full_name||prof.email||a.user_id)}</b><small>${esc(prof.email||'')}</small></div>
+      <button class="btn danger sm">הסר</button>`;
+    it.querySelector('button').onclick=async()=>{ try{ await Backend.unassign(a.id); toast('הוסר'); loadUsers(uc,p); }catch(e){ toast(e.message,5000); } };
+    ulist.appendChild(it);
+  });
+  const assignedIds = new Set(assigned.map(a=>a.user_id));
+  const alist=uc.querySelector('#alist'); alist.innerHTML='';
+  const avail = all.filter(u=>!assignedIds.has(u.id));
+  if(!avail.length) alist.appendChild(el('div','note','כל המשתמשים הרשומים כבר משויכים, או שאף אחד עוד לא נרשם באפליקציית המשתמש.'));
+  avail.forEach(u=>{
+    const it=el('div','item');
+    it.innerHTML = `<div class="nm"><b>${esc(u.full_name||u.email)}</b><small>${esc(u.email)}</small></div><button class="btn primary sm">שייך</button>`;
+    it.querySelector('button').onclick=async e=>{ e.target.disabled=true;
+      try{ await Backend.assignUserByEmail(p.id, u.email); toast('שויך'); loadUsers(uc,p); }catch(err){ toast(err.message,6000); e.target.disabled=false; } };
+    alist.appendChild(it);
+  });
+}
+
+boot();
+})();
+
+</script>
+</body></html>

@@ -1301,6 +1301,19 @@ const Backend = {
     const { error } = await sb.from('assignments').delete().eq('id', assignmentId);
     if(error) throw new Error(error.message);
   },
+  // Store the team's Dropbox refresh token server-side so the scheduled sync function can use it.
+  async saveDropboxAuth(refresh){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    if(!refresh) return;
+    const { error } = await sb.from('integrations').upsert({ id:'dropbox', dropbox_refresh:refresh, updated_at:new Date().toISOString() });
+    if(error) throw new Error(error.message);
+  },
+  // Trigger the server-side Dropbox sync (checks the folder for a newer file and updates the project).
+  async syncDropbox(projectId){
+    const sb = sbClient(); if(!sb) return null;
+    try{ const { data } = await sb.functions.invoke('sync-dropbox', { body:{ project_id:projectId||null } }); return data; }
+    catch(e){ return null; }
+  },
   async allUsers(){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data, error } = await sb.from('profiles').select('id,email,full_name,role').eq('role','user').order('created_at',{ascending:false});
@@ -1337,7 +1350,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-0705";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-0726";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -3541,16 +3554,30 @@ function userError(msg){
 async function userOpenProject(proj){
   uov(uBrand+uLoad('טוען את הפרויקט…'));
   try{
+    // Ask the server to pull the newest file from the technician's Dropbox folder first (best-effort).
+    try{ await Backend.syncDropbox(proj.id); const projs=await Backend.assignedProjects(); const fresh=projs.find(x=>x.id===proj.id); if(fresh) proj=fresh; }catch(_){}
     const buf=await Backend.downloadBlob(proj.id);
     const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
     uovRemove();
     setProject(parsed, buf);
     P.tech = Object.assign({ names:{}, includeAC:true }, proj.config||{});
     cfg.includeAC = P.tech.includeAC!=null ? P.tech.includeAC : true; P._uc=null;
+    applyUserConn(P.tech, parsed);
     P._server = { id:proj.id, version:proj.version||1 };
     render(); connect();
     startUserSync(proj.id);
   }catch(e){ userError('טעינת הפרויקט נכשלה: '+e.message); }
+}
+// Apply the technician-set connection (from the project config) to the user app's settings.
+// Local address is locked to the technician's value; external is seeded but the user may edit it.
+function applyUserConn(tech, parsed){
+  const projIp = parsed && parsed.conn && parsed.conn.ip;
+  cfg.localBase = tech.localBase || projIp || cfg.localBase || '';
+  cfg.localPort = tech.localPort || (parsed&&parsed.conn&&parsed.conn.port) || 95;
+  cfg.extBase   = tech.extBase || cfg.extBase || '';
+  cfg.extPort   = tech.extPort || 95;
+  cfg.conn = 'auto';
+  saveCfg();
 }
 let _userSync=null;
 function startUserSync(projectId){
@@ -3563,6 +3590,7 @@ function startUserSync(projectId){
         if(proj){ const buf=await Backend.downloadBlob(projectId); const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
           const keep={tab:route.tab, area:(route.area!=null&&parsed.areas[route.area])?route.area:null};
           setProject(parsed, buf); P.tech=Object.assign({names:{},includeAC:true}, proj.config||{}); cfg.includeAC=P.tech.includeAC; P._uc=null;
+          applyUserConn(P.tech, parsed);
           P._server={id:projectId, version:v}; route=keep; render(); toast('הפרויקט עודכן ✅',4000);
         }
       }
