@@ -38,8 +38,11 @@
   --tabbg:rgba(255,253,248,.82); color-scheme:light;
 }
 
+*,*::before,*::after{box-sizing:border-box}
 html{direction:rtl}
-html,body{height:100%}
+html,body{height:100%;max-width:100%;overflow-x:hidden;overscroll-behavior:none}
+body{touch-action:pan-y}            /* vertical scroll only — no sideways pan, no pinch-zoom */
+input[type=range]{touch-action:none} /* keep slider dragging working */
 body{background:var(--bg);background-image:var(--bg-grad);background-attachment:fixed;color:var(--fg);
   font-family:var(--sans);font-size:15px;line-height:1.45;-webkit-tap-highlight-color:transparent}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
@@ -1243,13 +1246,14 @@ const Backend = {
   },
 
   /* ── technician ── */
-  // Mark the current account as a technician (the admin site calls this on login/registration,
-  // so anyone registering there becomes a tech reliably without manual SQL).
-  async ensureTechProfile(){
+  // Set the current account's role explicitly. Called ONCE at registration:
+  // the admin site grants 'tech', the consumer app grants 'user'. Never on a plain login.
+  async setRole(role){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data:{ user } } = await sb.auth.getUser(); if(!user) return;
-    await sb.from('profiles').update({ role:'tech' }).eq('id', user.id);
+    await sb.from('profiles').update({ role }).eq('id', user.id);
   },
+  async ensureTechProfile(){ return this.setRole('tech'); },
   async myProjects(){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data, error } = await sb.from('projects').select('*').order('updated_at', { ascending:false });
@@ -1268,13 +1272,14 @@ const Backend = {
   // Save config and/or the current file metadata, and bump version so user apps re-pull.
   async saveProject(id, fields){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
-    const { data:cur } = await sb.from('projects').select('version').eq('id', id).single();
+    const { data:cur } = await sb.from('projects').select('version').eq('id', id).maybeSingle();
     const next = ((cur && cur.version) || 0) + 1;
     const { data, error } = await sb.from('projects')
       .update(Object.assign({}, fields, { version:next, updated_at:new Date().toISOString() }))
-      .eq('id', id).select().single();
+      .eq('id', id).select();
     if(error) throw new Error(error.message);
-    return data;
+    if(!data || !data.length) throw new Error('לא ניתן לשמור. ודא שאתה מחובר כטכנאי (והרצת את patch3). אם הבעיה נמשכת — התנתק והתחבר מחדש.');
+    return data[0];
   },
   async uploadBlob(projectId, bytes){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
@@ -1299,6 +1304,19 @@ const Backend = {
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { error } = await sb.from('assignments').delete().eq('id', assignmentId);
     if(error) throw new Error(error.message);
+  },
+  // Store the team's Dropbox refresh token server-side so the scheduled sync function can use it.
+  async saveDropboxAuth(refresh){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    if(!refresh) return;
+    const { error } = await sb.from('integrations').upsert({ id:'dropbox', dropbox_refresh:refresh, updated_at:new Date().toISOString() });
+    if(error) throw new Error(error.message);
+  },
+  // Trigger the server-side Dropbox sync (checks the folder for a newer file and updates the project).
+  async syncDropbox(projectId){
+    const sb = sbClient(); if(!sb) return null;
+    try{ const { data } = await sb.functions.invoke('sync-dropbox', { body:{ project_id:projectId||null } }); return data; }
+    catch(e){ return null; }
   },
   async allUsers(){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
@@ -1336,7 +1354,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-0655";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1228";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1847,6 +1865,66 @@ const GW = {
   async bus(){ return (await this.post({ main:'device', sub:'dynet_bus', find:'all' })).value; },
   async ident(){ return (await this.post({ main:'device', sub:'identification', find:'all' })).value; }
 };
+
+/* ── CoolMaster (CoolMasterNet) direct control ──
+   The app talks to the CoolMaster over its ASCII line protocol on a second TCP connection
+   (native cmSend/cmPoll). The technician sets the CoolMaster address in the admin site
+   (P.tech.cmIp / cmPort); unit→room mapping lives in P.tech.acUnits. */
+const CM = {
+  host(){ return (P && P.tech && P.tech.cmIp) || ''; },
+  port(){ return (P && P.tech && P.tech.cmPort) || 10102; },
+  enabled(){ return !!this.host() && HAS_TCP; },
+  units(){ return (P && P.tech && P.tech.acUnits) || []; },        // [{line, addr, name}]
+  uid(u){ let L=String(u.line||'L1').trim(); if(!/^L/i.test(L)) L='L'+L; return L+'.'+String(u.addr||'').trim(); },
+  // Units whose NAME matches this room's name (same name-matching the covers use).
+  unitsForRoom(aid){ return this.units().filter(u => String(acMatchRoom(u.name))===String(aid))
+                              .map(u => ({ uid:this.uid(u), name:u.name })); },
+  async cmd(line){
+    if(!this.enabled()) throw new Error('CoolMaster לא מוגדר');
+    const bytes = new TextEncoder().encode(line + '\r');
+    const s = await native({ kind:'cmSend', host:this.host(), port:this.port(), b64:u8ToB64(bytes) });
+    if(!s || s.error) throw new Error('אין חיבור ל-CoolMaster ('+this.host()+':'+this.port()+')');
+    let text=''; const t0=Date.now();
+    while(Date.now()-t0 < 3000){
+      const r = await native({ kind:'cmPoll', wait:0.4 });
+      if(r && r.b64){ text += new TextDecoder().decode(b64ToU8(r.b64)); if(/(^|\s)OK(\s|$)|Error/i.test(text)) break; }
+      else if(text) break;
+    }
+    return text;
+  },
+  // Parse an `ls` listing. Columns: UID ON/OFF setpoint roomtemp fan mode [fail filter demand]
+  parseLs(text){
+    const num = s => { const x=parseFloat(String(s).replace(/[^\d.]/g,'')); return isNaN(x)?null:Math.round(x); };
+    const out=[];
+    (text||'').split(/\r?\n/).forEach(ln=>{
+      const m = ln.trim().match(/^([A-Za-z]\d+\.\d+)\s+(ON|OFF)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i);
+      if(!m) return;
+      out.push({ uid:m[1], on:/on/i.test(m[2]), setTemp:num(m[3]), roomTemp:num(m[4]),
+                 fan:(m[5]||'').toLowerCase(), mode:(m[6]||'').toLowerCase() });
+    });
+    return out;
+  },
+  async list(){ return this.parseLs(await this.cmd('ls')); },
+  async setOn(uid, on){ return this.cmd((on?'on ':'off ')+uid); },
+  async setMode(uid, mode){ return this.cmd(mode+' '+uid); },          // mode: 'cool' | 'heat'
+  async setTemp(uid, t){ return this.cmd('temp '+uid+' '+t); },
+  async setFan(uid, f){ return this.cmd('fspeed '+uid+' '+f); }        // f: l | m | h | a
+};
+let cmState = {};   // uid → last-known {on,setTemp,roomTemp,fan,mode}
+let _cmPoll = null; // interval handle for live CoolMaster feedback while a room is open
+// Match an A/C unit's name to a room by name (final-letter-insensitive, with the מאסטר→הורים alias).
+function acMatchRoom(name){
+  if(!name || !P) return null;
+  const n = heNorm(name), ALIASES=[['מאסטר','הורים']];
+  const rooms = Object.values(P.areas).map(a=>({id:a.id,nm:heNorm(areaName(a))})).filter(r=>r.nm);
+  for(const [aw,rw] of ALIASES){ if(n.includes(heNorm(aw))){ const c=rooms.filter(r=>r.nm.includes(heNorm(rw))).sort((a,b)=>b.nm.length-a.nm.length)[0]; if(c) return c.id; } }
+  let best=null; for(const r of rooms){ if(r.nm===n || r.nm.includes(n) || n.includes(r.nm)){ if(!best||r.nm.length>best.nm.length) best=r; } }
+  return best ? best.id : null;
+}
+async function cmRefresh(){
+  if(!CM.enabled()) return;
+  try{ const list = await CM.list(); list.forEach(u => cmState[u.uid] = u); updateClimateCards(); }catch(e){}
+}
 function areaLabel(id){ const a=P&&P.areas[id]; return a && a.name ? `${a.name} (${id})` : 'אזור '+id; }
 function chLabel(area, cn){ if(!cn) return ''; const c = P && findCh(area, cn); return c ? chName(c) : 'ערוץ '+cn; }
 const devPlace = dv => (dv && dv.location) ? dv.location : ('Box '+(dv?dv.box:'?'));   // the controller's board/location, not its box number
@@ -2040,7 +2118,7 @@ function classifyUser(){
       } else if(c.type==='area'){
         const a = P.areas[c.id]; if(!a) return;
         const t = sysCtx || (isAC(a.name)?'ac':sysTypeOf(a.name));
-        if(t==='ac' && !acIncluded()) return;    // A/C shown only when the technician enabled it
+        if(t==='ac') return;                     // A/C no longer comes from DyNet — it's CoolMaster-direct now
         if(t){ systems.push({ area:a, type:t }); }
         else { const fn=floor||'כללי'; let fl=lightFloors.find(x=>x.floor===fn); if(!fl){ fl={floor:fn,rooms:[]}; lightFloors.push(fl); } fl.rooms.push(a); }
       }
@@ -2094,46 +2172,69 @@ const AC_SVG  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const SNOW_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4 6l16 12M20 6L4 18"/><path d="M12 5.5 9.5 3M12 5.5 14.5 3M12 18.5 9.5 21M12 18.5 14.5 21M5.5 8.2 2.5 8M5.5 8.2 5.2 5M18.5 15.8l3 .2M18.5 15.8l.3 3M18.5 8.2l3-.2M18.5 8.2l.3-3M5.5 15.8l-3 .2M5.5 15.8l-.3 3"/></svg>';
 const FLAME_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.5 3-1.8 4.3-2.8 6.1C8 11.3 8.4 13 10 13c-1 1.4-1 3 .3 4.2M12 3c3 2.2 5.5 5.3 5.5 9a5.5 5.5 0 0 1-11 0c0-1 .2-1.9.6-2.7"/></svg>';
 const TEMP_MIN = 16, TEMP_MAX = 30;
-const FAN_STEPS = [[0,'נמוך'],[1,'בינוני'],[2,'גבוה'],[4,'אוטו']];
-// Compact climate control, shown at the top of the room beside the brightness ring.
-function climateCard(a){
-  const L = live[a.id] || {};
-  const t = L.setTemp!=null ? L.setTemp : 24;
-  const room = L.roomTemp;
-  const mode = L.acMode!=null ? L.acMode : 0;         // 0 cool · 1 heat
-  const on = !!L.acOn;
-  return `<div class="climate${on?' on':''}" data-clim="${a.id}">
-    <div class="cl-top"><span class="cl-nm">${esc(areaName(a))}</span>
-      <button class="cl-pw" data-acpw="${a.id}" aria-pressed="${on}" aria-label="הפעלה/כיבוי">${POWER_SVG}</button></div>
+const CM_FANS = [['l','נמוך'],['m','בינוני'],['h','גבוה'],['a','אוטו']];
+const fanMatch = (fan, v) => { fan=(fan||'').toLowerCase();
+  return v==='l'?/^(l|vlow)/.test(fan) : v==='m'?fan[0]==='m' : v==='h'?/^[ht]/.test(fan) : /^a/.test(fan); };
+// Compact climate control for one CoolMaster unit, shown at the top of its room beside the ring.
+function climateCard(unit){
+  const uid = unit.uid, st = cmState[uid] || {};
+  const t = st.setTemp!=null ? st.setTemp : 24;
+  const room = st.roomTemp;
+  const mode = st.mode==='heat' ? 1 : 0;
+  const on = !!st.on;
+  const id = esc(uid);
+  return `<div class="climate${on?' on':''}" data-clim="${id}">
+    <div class="cl-top"><span class="cl-nm">${esc(unit.name||uid)}</span>
+      <button class="cl-pw" data-acpw="${id}" aria-pressed="${on}" aria-label="הפעלה/כיבוי">${POWER_SVG}</button></div>
     <div class="cl-set">
-      <button class="cl-step" data-actemp="${a.id}:1" aria-label="הגבר טמפרטורה">+</button>
-      <div class="cl-read"><div class="cl-big"><span data-settemp="${a.id}">${t}</span><span class="cl-deg">°</span></div>
-        <div class="cl-room">בחדר <b data-roomtemp="${a.id}">${room!=null?room+'°':'—'}</b></div></div>
-      <button class="cl-step" data-actemp="${a.id}:-1" aria-label="הנמך טמפרטורה">−</button>
+      <button class="cl-step" data-actemp="${id}:1" aria-label="הגבר טמפרטורה">+</button>
+      <div class="cl-read"><div class="cl-big"><span data-settemp="${id}">${t}</span><span class="cl-deg">°</span></div>
+        <div class="cl-room">בחדר <b data-roomtemp="${id}">${room!=null?room+'°':'—'}</b></div></div>
+      <button class="cl-step" data-actemp="${id}:-1" aria-label="הנמך טמפרטורה">−</button>
     </div>
     <div class="cl-mode">
-      <button class="cl-md" data-acmode="${a.id}:0" aria-pressed="${mode===0}">${SNOW_SVG}<span>קור</span></button>
-      <button class="cl-md" data-acmode="${a.id}:1" aria-pressed="${mode===1}">${FLAME_SVG}<span>חום</span></button>
+      <button class="cl-md" data-acmode="${id}:cool" aria-pressed="${mode===0}">${SNOW_SVG}<span>קור</span></button>
+      <button class="cl-md" data-acmode="${id}:heat" aria-pressed="${mode===1}">${FLAME_SVG}<span>חום</span></button>
     </div>
-    <div class="cl-fan">${FAN_STEPS.map(([v,l])=>`<button class="cl-fb" data-acfan="${a.id}:${v}" aria-pressed="${L.acFan===v}">${l}</button>`).join('')}</div>
+    <div class="cl-fan">${CM_FANS.map(([v,l])=>`<button class="cl-fb" data-acfan="${id}:${v}" aria-pressed="${fanMatch(st.fan,v)}">${l}</button>`).join('')}</div>
   </div>`;
 }
-// Climate controls (delegated). Power/mode/fan reuse the CoolMaster channels; temperature uses GW.setTemp.
+// Repaint climate cards from the latest CoolMaster state (called after a refresh).
+function updateClimateCards(){
+  document.querySelectorAll('.climate[data-clim]').forEach(card=>{
+    const uid=card.dataset.clim, st=cmState[uid]; if(!st) return;
+    card.classList.toggle('on', !!st.on);
+    const pw=card.querySelector('.cl-pw'); if(pw) pw.setAttribute('aria-pressed', !!st.on);
+    const tn=card.querySelector('[data-settemp]'); if(tn && st.setTemp!=null && card.dataset.touchTemp!=='1') tn.textContent=st.setTemp;
+    const rn=card.querySelector('[data-roomtemp]'); if(rn) rn.textContent = st.roomTemp!=null ? st.roomTemp+'°' : '—';
+    const md=st.mode==='heat'?1:0; card.querySelectorAll('.cl-md').forEach((b,i)=>b.setAttribute('aria-pressed', i===md));
+    card.querySelectorAll('.cl-fb').forEach(b=>{ const v=b.dataset.acfan.split(':')[1]; b.setAttribute('aria-pressed', fanMatch(st.fan,v)); });
+  });
+}
+// Climate controls (delegated) — drive the CoolMaster directly, then refresh its real state.
 document.addEventListener('click', e => {
-  const pw=e.target.closest('.cl-pw'); if(pw){ const a=+pw.dataset.acpw, on=pw.getAttribute('aria-pressed')!=='true';
-    act(GW.level(a,101,on?100:0,0)); setLive(a,{acOn:on}); pw.setAttribute('aria-pressed',on); pw.closest('.climate').classList.toggle('on',on); return; }
-  const tp=e.target.closest('.cl-step'); if(tp){ const [a,d]=tp.dataset.actemp.split(':').map(Number);
-    const L=live[a]||{}, t=Math.max(TEMP_MIN,Math.min(TEMP_MAX,(L.setTemp!=null?L.setTemp:24)+d));
-    act(GW.setTemp(a,t)); const n=document.querySelector(`[data-settemp="${a}"]`); if(n) n.textContent=t; return; }
-  const md=e.target.closest('.cl-md'); if(md){ const [a,v]=md.dataset.acmode.split(':').map(Number);
-    act(GW.level(a,102,v,0)); setLive(a,{acMode:v}); md.parentElement.querySelectorAll('.cl-md').forEach(x=>x.setAttribute('aria-pressed',x===md)); return; }
-  const fb=e.target.closest('.cl-fb'); if(fb){ const [a,v]=fb.dataset.acfan.split(':').map(Number);
-    act(GW.level(a,103,v,0)); setLive(a,{acFan:v}); fb.parentElement.querySelectorAll('.cl-fb').forEach(x=>x.setAttribute('aria-pressed',x===fb)); return; }
+  const pw=e.target.closest('.cl-pw'); if(pw){ const uid=pw.dataset.acpw, on=pw.getAttribute('aria-pressed')!=='true';
+    cmState[uid]=Object.assign({},cmState[uid],{on}); pw.setAttribute('aria-pressed',on); pw.closest('.climate').classList.toggle('on',on);
+    act(CM.setOn(uid,on).then(()=>cmRefresh())); return; }
+  const tp=e.target.closest('.cl-step'); if(tp){ const [uid,ds]=tp.dataset.actemp.split(':'); const d=+ds;
+    const cur=(cmState[uid]&&cmState[uid].setTemp!=null)?cmState[uid].setTemp:24;
+    const t=Math.max(TEMP_MIN,Math.min(TEMP_MAX,cur+d));
+    cmState[uid]=Object.assign({},cmState[uid],{setTemp:t});
+    const card=tp.closest('.climate'); if(card) card.dataset.touchTemp='1';
+    const n=document.querySelector(`[data-settemp="${CSS.escape(uid)}"]`); if(n) n.textContent=t;
+    act(CM.setTemp(uid,t).then(()=>{ if(card) delete card.dataset.touchTemp; cmRefresh(); })); return; }
+  const md=e.target.closest('.cl-md'); if(md){ const [uid,mode]=md.dataset.acmode.split(':');
+    cmState[uid]=Object.assign({},cmState[uid],{mode}); md.parentElement.querySelectorAll('.cl-md').forEach(x=>x.setAttribute('aria-pressed',x===md));
+    act(CM.setMode(uid,mode).then(()=>cmRefresh())); return; }
+  const fb=e.target.closest('.cl-fb'); if(fb){ const [uid,v]=fb.dataset.acfan.split(':');
+    fb.parentElement.querySelectorAll('.cl-fb').forEach(x=>x.setAttribute('aria-pressed',x===fb));
+    act(CM.setFan(uid,v).then(()=>cmRefresh())); return; }
 });
 const sysLabel = t => t==='ac' ? 'מיזוג' : (SYS_TYPES[t]||{}).he || t;
-// Bottom "systems in room" card handles covers only; A/C is rendered at the top as a climate card.
-const sysTiles = (type, areas) => type==='ac' ? areas.map(climateCard).join('') : `<div class="cov-grid">${areas.map(a=>coverTile(a,type)).join('')}</div>`;
+// Bottom "systems in room" card handles covers only; A/C is a CoolMaster climate card at the top.
+const sysTiles = (type, areas) => `<div class="cov-grid">${areas.map(a=>coverTile(a,type)).join('')}</div>`;
 function renderUserAreas(m){
+  clearInterval(_cmPoll); _cmPoll=null;   // no live A/C polling on the rooms list
   const { lightFloors } = classifyUser();
   const floorHtml = fl => `<section class="floor"><div class="floor-title">${esc(fl.floor)}</div>
     <div class="rooms-grid">${fl.rooms.map(roomTile).join('')}</div></section>`;
@@ -2283,16 +2384,18 @@ function renderArea(m, a){
   }).join('');
   // End-user: systems that belong to this room. A/C goes to the top (climate card beside the ring);
   // covers (curtains / shades / blinds …) are listed below the lights.
-  const roomSysList = USER ? (classifyUser().roomSys[a.id] || []) : [];
-  const acAreas = roomSysList.filter(s => s.type==='ac').map(s => s.area);
-  const coverList = roomSysList.filter(s => s.type!=='ac');
+  const coverList = USER ? (classifyUser().roomSys[a.id] || []) : [];
   let sysCard = '';
   if(coverList.length){
     const byType = {}; coverList.forEach(s => (byType[s.type]=byType[s.type]||[]).push(s.area));
     sysCard = `<section class="card"><h2><span class="seclbl">מערכות החדר</span></h2>
       ${Object.keys(byType).map(t => `<div class="sys-group"><div class="sys-grp-t">${esc(sysLabel(t))}</div>${sysTiles(t, byType[t])}</div>`).join('')}</section>`;
   }
-  const climate = acAreas.length ? `<div class="clim-col">${acAreas.map(climateCard).join('')}</div>` : '';
+  // A/C: CoolMaster units mapped to this room (by the technician), controlled directly.
+  const cmUnits = USER ? CM.unitsForRoom(a.id) : [];
+  const climate = cmUnits.length ? `<div class="clim-col">${cmUnits.map(climateCard).join('')}</div>` : '';
+  clearInterval(_cmPoll);
+  if(cmUnits.length && CM.enabled()){ cmRefresh(); _cmPoll = setInterval(cmRefresh, 5000); }   // live feedback while the room is open
   const panels = a.devices.map(d=>P.devices[d]).filter(Boolean);
   const ringHtml = a.channels.length ? `
       <div class="ring" id="ring" style="--p:0" data-off>
@@ -3500,7 +3603,7 @@ function userLogin(){
     try{ await Backend.signIn(em(),pw()); userLoadProject(); }catch(err){ toast(net(err)||'ההתחברות נכשלה',6000); e.target.disabled=false; } };
   $('#ureg').onclick=async e=>{ if(!em()||pw().length<6) return toast('אימייל + סיסמה (6 תווים לפחות)'); e.target.disabled=true;
     try{ await Backend.signUp(em(),pw(),{full_name:nm(),role:'user'}); toast('נרשמת! אם מופעל אימות מייל — אשר ואז התחבר.',7000);
-      try{ await Backend.signIn(em(),pw()); userLoadProject(); }catch(_){ e.target.disabled=false; } }
+      try{ await Backend.signIn(em(),pw()); await Backend.setRole('user').catch(()=>{}); userLoadProject(); }catch(_){ e.target.disabled=false; } }
     catch(err){ toast(net(err)||'הרישום נכשל',6000); e.target.disabled=false; } };
   $('#uforgot').onclick=async e=>{ e.preventDefault(); if(!em()) return toast('הזן קודם אימייל בשדה למעלה');
     try{ await Backend.resetPassword(em(), location.href.split('#')[0]); toast('נשלח אליך מייל לאיפוס סיסמה.',8000); }catch(err){ toast(net(err)||'השליחה נכשלה',6000); } };
@@ -3540,16 +3643,30 @@ function userError(msg){
 async function userOpenProject(proj){
   uov(uBrand+uLoad('טוען את הפרויקט…'));
   try{
+    // Ask the server to pull the newest file from the technician's Dropbox folder first (best-effort).
+    try{ await Backend.syncDropbox(proj.id); const projs=await Backend.assignedProjects(); const fresh=projs.find(x=>x.id===proj.id); if(fresh) proj=fresh; }catch(_){}
     const buf=await Backend.downloadBlob(proj.id);
     const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
     uovRemove();
     setProject(parsed, buf);
     P.tech = Object.assign({ names:{}, includeAC:true }, proj.config||{});
     cfg.includeAC = P.tech.includeAC!=null ? P.tech.includeAC : true; P._uc=null;
+    applyUserConn(P.tech, parsed);
     P._server = { id:proj.id, version:proj.version||1 };
     render(); connect();
     startUserSync(proj.id);
   }catch(e){ userError('טעינת הפרויקט נכשלה: '+e.message); }
+}
+// Apply the technician-set connection (from the project config) to the user app's settings.
+// Local address is locked to the technician's value; external is seeded but the user may edit it.
+function applyUserConn(tech, parsed){
+  const projIp = parsed && parsed.conn && parsed.conn.ip;
+  cfg.localBase = tech.localBase || projIp || cfg.localBase || '';
+  cfg.localPort = tech.localPort || (parsed&&parsed.conn&&parsed.conn.port) || 95;
+  cfg.extBase   = tech.extBase || cfg.extBase || '';
+  cfg.extPort   = tech.extPort || 95;
+  cfg.conn = 'auto';
+  saveCfg();
 }
 let _userSync=null;
 function startUserSync(projectId){
@@ -3562,7 +3679,10 @@ function startUserSync(projectId){
         if(proj){ const buf=await Backend.downloadBlob(projectId); const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
           const keep={tab:route.tab, area:(route.area!=null&&parsed.areas[route.area])?route.area:null};
           setProject(parsed, buf); P.tech=Object.assign({names:{},includeAC:true}, proj.config||{}); cfg.includeAC=P.tech.includeAC; P._uc=null;
-          P._server={id:projectId, version:v}; route=keep; render(); toast('הפרויקט עודכן ✅',4000);
+          applyUserConn(P.tech, parsed);
+          P._server={id:projectId, version:v}; route=keep; render();
+          if(HAS_TCP) native({ kind:'tcpClose' }); connect();   // re-resolve local/external with the new address
+          toast('הפרויקט עודכן ✅',4000);
         }
       }
     }catch(e){}

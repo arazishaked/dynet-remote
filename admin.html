@@ -56,6 +56,20 @@ input:focus{border-color:var(--accent)}
 .rn{display:flex;gap:8px;align-items:center}
 .rn input{flex:1}
 .hide{display:none!important}
+.collapse{border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.collapse>.csum{list-style:none;cursor:pointer;padding:13px 14px;display:flex;align-items:center;gap:10px}
+.collapse>.csum::-webkit-details-marker{display:none}
+.collapse>.csum::before{content:"▸";color:var(--muted);font-size:13px;transition:transform .15s}
+.collapse[open]>.csum::before{transform:rotate(90deg)}
+.csum .ctitle{font-weight:650;font-size:15px}
+.csum .cmeta,.fsum .cmeta{color:var(--muted);font-size:12.5px;font-weight:400}
+.collapse>#roomsbody{padding:0 12px 12px}
+.floorgrp{border:1px solid var(--line);border-radius:10px;background:var(--card);margin-bottom:8px}
+.floorgrp>.fsum{list-style:none;cursor:pointer;padding:10px 12px;font-weight:600;display:flex;align-items:center;gap:8px}
+.floorgrp>.fsum::-webkit-details-marker{display:none}
+.floorgrp>.fsum::before{content:"▸";color:var(--muted);font-size:12px;transition:transform .15s}
+.floorgrp[open]>.fsum::before{transform:rotate(90deg)}
+.floorgrp .rooms{padding:0 12px 12px;display:flex;flex-direction:column;gap:8px}
 .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
 </style>
@@ -1083,7 +1097,7 @@ function lightingFloors(P){
 
 /* ---- state ---- */
 const state = { me:null, projects:[], sel:null, parsed:null, users:[], assigned:[], q:'' };
-const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95 }, (p && p.config) || {});
+const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95, cmIp:'', cmPort:10102, acUnits:[] }, (p && p.config) || {});
 
 /* ---- boot ---- */
 function renderNewPassword(){
@@ -1221,18 +1235,34 @@ function renderDetail(){
       renderDash(); selectProject(saved);
     }catch(err){ st.textContent=''; toast(err.message||'ההעלאה נכשלה',6000); }
   };
-  // --- A/C toggle ---
+  // --- A/C (CoolMaster direct) ---
   const ac=el('div','card');
-  ac.innerHTML = `<h2>מערכת מיזוג אצל המשתמש</h2>
-    <div class="seg" id="acseg"><button data-ac="1" aria-pressed="${cfg.includeAC}">כלול מיזוג</button>
-      <button data-ac="0" aria-pressed="${!cfg.includeAC}">בלי מיזוג</button></div>`;
+  ac.innerHTML = `<h2>מיזוג · CoolMaster</h2>
+    <div class="note">האפליקציה מתקשרת ישירות מול ה-CoolMaster (לא דרך טסק). הזן את כתובת ה-CoolMaster, והאפליקציה תקרא ממנו את היחידות ותשלוט בהן.</div>
+    <div class="seg" id="acseg" style="margin-top:10px"><button data-ac="1" aria-pressed="${cfg.includeAC}">הצג מיזוג</button>
+      <button data-ac="0" aria-pressed="${!cfg.includeAC}">בלי מיזוג</button></div>
+    <div class="row" style="margin-top:10px">
+      <div class="field" style="flex:2"><label>כתובת ה-CoolMaster</label><input id="cmip" class="ltr" placeholder="192.168.1.50" value="${esc(cfg.cmIp||'')}"></div>
+      <div class="field" style="flex:1"><label>פורט <small>(ברירת מחדל 10102)</small></label><input id="cmport" class="ltr" inputmode="numeric" value="${esc(cfg.cmPort||10102)}"></div>
+    </div>
+    <button class="btn primary" id="savecm" style="margin-top:4px">שמור מיזוג</button>
+    <h2 style="margin-top:18px">שיוך יחידות מיזוג לחדרים</h2>
+    <div class="note">כל יחידת CoolMaster (מזהה כמו <b class="ltr">L1.100</b>) משויכת לחדר. המשתמש יראה אותה בתוך אותו חדר. את המזהים אפשר לראות בממשק של ה-CoolMaster או באפליקציית המשתמש אחרי חיבור.</div>
+    <div id="acmap" style="margin-top:10px"></div>`;
   d.appendChild(ac);
-  ac.querySelectorAll('#acseg button').forEach(b=> b.onclick=async()=>{
-    const on=b.dataset.ac==='1'; const nc=Object.assign({},cfg,{includeAC:on});
+  renderAcMap(ac.querySelector('#acmap'), p, cfg);
+  ac.querySelectorAll('#acseg button').forEach(b=> b.onclick=()=>{
     ac.querySelectorAll('#acseg button').forEach(x=>x.setAttribute('aria-pressed', x===b));
-    try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast(on?'המיזוג יוצג':'המיזוג יוסתר'); }
-    catch(err){ toast(err.message,5000); }
   });
+  ac.querySelector('#savecm').onclick=async e=>{
+    const on=ac.querySelector('#acseg button[aria-pressed="true"]').dataset.ac==='1';
+    const nc=Object.assign({},cfg,{ includeAC:on,
+      cmIp:(ac.querySelector('#cmip').value||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,''),
+      cmPort:+ac.querySelector('#cmport').value||10102 });
+    e.target.disabled=true;
+    try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('הגדרות המיזוג נשמרו'); }
+    catch(err){ toast(err.message,6000); e.target.disabled=false; }
+  };
   // --- connection (IP addresses + ports) ---
   const cc=el('div','card');
   cc.innerHTML = `<h2>חיבור · כתובות IP</h2>
@@ -1257,23 +1287,29 @@ function renderDetail(){
     try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('הכתובות נשמרו'); }
     catch(err){ toast(err.message,6000); e.target.disabled=false; }
   };
-  // --- room names ---
-  const rc=el('div','card'); rc.innerHTML = `<h2>שמות חדרים</h2>`;
-  if(!state.parsed){ rc.appendChild(el('div','note','העלה קובץ ‎.dlj‎ כדי לערוך שמות חדרים.')); }
+  // --- room names (collapsed; folders per floor, each collapsed too) ---
+  const rc=el('div','card');
+  if(!state.parsed){ rc.innerHTML=`<h2>שמות חדרים</h2>`; rc.appendChild(el('div','note','העלה קובץ ‎.dlj‎ כדי לערוך שמות חדרים.')); }
   else {
     const floors=lightingFloors(state.parsed);
-    const box=el('div','rooms');
+    const total=floors.reduce((s,f)=>s+f.rooms.length,0);
+    rc.innerHTML = `<details class="collapse"><summary class="csum"><span class="ctitle">שמות חדרים</span><span class="cmeta">${total} חדרים · לחץ לפתיחה</span></summary><div id="roomsbody"></div></details>`;
+    const body=rc.querySelector('#roomsbody');
+    const box=el('div'); box.style.marginTop='10px';
     floors.forEach(fl=>{
-      box.appendChild(el('div','floorlbl',esc(fl.floor)));
+      const fd=el('details','floorgrp');
+      fd.innerHTML=`<summary class="fsum">${esc(fl.floor)} <span class="cmeta">(${fl.rooms.length})</span></summary>`;
+      const inner=el('div','rooms');
       fl.rooms.forEach(a=>{
         const orig=a.name||('אזור '+a.id);
         const cur=(cfg.names&&cfg.names[a.id])||'';
         const r=el('div','rn');
-        r.innerHTML = `<input data-area="${a.id}" value="${esc(cur||orig)}" placeholder="${esc(orig)}">`;
-        box.appendChild(r);
+        r.innerHTML=`<input data-area="${a.id}" value="${esc(cur||orig)}" placeholder="${esc(orig)}">`;
+        inner.appendChild(r);
       });
+      fd.appendChild(inner); box.appendChild(fd);
     });
-    rc.appendChild(box);
+    body.appendChild(box);
     const save=el('button','btn primary','שמור שמות'); save.style.marginTop='12px';
     save.onclick=async()=>{
       const names=Object.assign({}, cfg.names);
@@ -1284,10 +1320,10 @@ function renderDetail(){
       });
       const nc=Object.assign({},cfg,{names});
       save.disabled=true;
-      try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('השמות נשמרו'); renderDetail(); }
+      try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('השמות נשמרו'); }
       catch(err){ toast(err.message,6000); save.disabled=false; }
     };
-    rc.appendChild(save);
+    body.appendChild(save);
   }
   d.appendChild(rc);
   // --- users / assignment ---
@@ -1295,6 +1331,43 @@ function renderDetail(){
     <h2 style="margin-top:16px">הוסף משתמש</h2><div class="list" id="alist"></div>`;
   d.appendChild(uc);
   loadUsers(uc, p);
+}
+
+/* ---- CoolMaster units: LINE + address + name (matched to the room by name) ---- */
+function renderAcMap(host, p, cfg){
+  host.innerHTML='';
+  const units=(cfg.acUnits||[]).slice();
+  const list=el('div','list');
+  units.forEach((u,i)=>{
+    const it=el('div','item');
+    it.innerHTML=`<div class="nm"><b class="ltr">${esc(u.line||'L1')}.${esc(u.addr||'')}</b><small>${esc(u.name||'')}</small></div>
+      <button class="btn danger sm">הסר</button>`;
+    it.querySelector('button').onclick=()=>{ units.splice(i,1); saveUnits(p,cfg,units,host); };
+    list.appendChild(it);
+  });
+  if(!units.length) list.appendChild(el('div','note','אין עדיין יחידות.'));
+  host.appendChild(list);
+  const add=el('div'); add.style.marginTop='10px';
+  add.innerHTML=`<div class="row">
+      <div class="field" style="flex:1"><label>LINE</label><input id="newline" class="ltr" placeholder="L1" value="L1"></div>
+      <div class="field" style="flex:1"><label>כתובת</label><input id="newaddr" class="ltr" placeholder="100"></div>
+      <div class="field" style="flex:2"><label>שם (כשם החדר)</label><input id="newname" placeholder="חדר הורים"></div>
+    </div>
+    <button class="btn primary sm" id="adduid">הוסף יחידה</button>`;
+  host.appendChild(add);
+  add.querySelector('#adduid').onclick=()=>{
+    const line=(add.querySelector('#newline').value||'L1').trim();
+    const addr=(add.querySelector('#newaddr').value||'').trim();
+    const name=(add.querySelector('#newname').value||'').trim();
+    if(!addr) return toast('הזן כתובת יחידה');
+    if(!name) return toast('הזן שם (כשם החדר)');
+    units.push({line, addr, name}); saveUnits(p,cfg,units,host);
+  };
+}
+async function saveUnits(p,cfg,units,host){
+  const nc=Object.assign({},cfg,{acUnits:units});
+  try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('השיוך נשמר'); if(host) renderAcMap(host,saved,cfgOf(saved)); }
+  catch(err){ toast(err.message,6000); }
 }
 
 /* ---- Dropbox folder linking ---- */
