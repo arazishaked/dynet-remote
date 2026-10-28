@@ -265,4 +265,3 @@ extension Bridge: UIDocumentPickerDelegate {
 extension UIWindowScene {
     var keyWindow: UIWindow? { windows.first { $0.isKeyWindow } ?? windows.first }
 }
- 
