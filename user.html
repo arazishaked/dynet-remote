@@ -1355,7 +1355,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1251";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1258";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1875,10 +1875,11 @@ const CM = {
   host(){ return (P && P.tech && P.tech.cmIp) || ''; },
   port(){ return (P && P.tech && P.tech.cmPort) || 10102; },
   enabled(){ return !!this.host() && HAS_TCP; },
-  units(){ return (P && P.tech && P.tech.acUnits) || []; },        // [{line, addr, name}]
+  units(){ return (P && P.tech && P.tech.acUnits) || []; },        // [{line, addr, room, name}]
   uid(u){ let L=String(u.line||'L1').trim(); if(!/^L/i.test(L)) L='L'+L; return L+'.'+String(u.addr||'').trim(); },
-  // Units whose NAME matches this room's name (same name-matching the covers use).
-  unitsForRoom(aid){ return this.units().filter(u => String(acMatchRoom(u.name))===String(aid))
+  // Which room a unit belongs to: the explicitly chosen room id, else a name match.
+  roomOf(u){ if(u.room!=null && u.room!=='') return String(u.room); const m=acMatchRoom(u.name); return m!=null?String(m):null; },
+  unitsForRoom(aid){ return this.units().filter(u => this.roomOf(u)===String(aid))
                               .map(u => ({ uid:this.uid(u), name:u.name })); },
   async cmd(line){
     if(!this.enabled()) throw new Error('CoolMaster לא מוגדר');
@@ -2247,7 +2248,7 @@ function renderUserAreas(m){
   const floorHtml = fl => `<section class="floor"><div class="floor-title">${esc(fl.floor)}</div>
     <div class="rooms-grid">${fl.rooms.map(roomTile).join('')}</div></section>`;
   // A/C units whose name didn't match any room — show them here so they're never invisible.
-  const orphan = (USER && acIncluded()) ? CM.units().filter(u => acMatchRoom(u.name)==null).map(u => ({ uid:CM.uid(u), name:u.name })) : [];
+  const orphan = (USER && acIncluded()) ? CM.units().filter(u => CM.roomOf(u)==null).map(u => ({ uid:CM.uid(u), name:u.name })) : [];
   const orphanHtml = orphan.length ? `<section class="floor"><div class="floor-title">מיזוג (לא שויך לחדר — בדוק שהשם תואם לשם חדר)</div>
     <div class="clim-col">${orphan.map(climateCard).join('')}</div></section>` : '';
   m.innerHTML = `<div class="userareas">${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;

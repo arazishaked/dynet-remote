@@ -1333,15 +1333,28 @@ function renderDetail(){
   loadUsers(uc, p);
 }
 
-/* ---- CoolMaster units: LINE + address + name (matched to the room by name) ---- */
+/* ---- CoolMaster units: LINE + address + explicit room selection ---- */
+function roomOptions(selected){
+  if(!state.parsed) return `<option value="">— אין חדרים (העלה קובץ) —</option>`;
+  const floors=lightingFloors(state.parsed);
+  let html=`<option value="">— בחר חדר —</option>`;
+  floors.forEach(fl=>{ html+=`<optgroup label="${esc(fl.floor)}">`;
+    fl.rooms.forEach(a=>{ const nm=(cfgOf(state.sel).names[a.id])||a.name||('אזור '+a.id);
+      html+=`<option value="${a.id}" ${String(selected)===String(a.id)?'selected':''}>${esc(nm)}</option>`; });
+    html+=`</optgroup>`; });
+  return html;
+}
+function roomNameById(aid){ if(!state.parsed) return ''; const a=state.parsed.areas[aid]; return a ? ((cfgOf(state.sel).names[aid])||a.name||('אזור '+aid)) : ''; }
 function renderAcMap(host, p, cfg){
   host.innerHTML='';
   const units=(cfg.acUnits||[]).slice();
   const list=el('div','list');
   units.forEach((u,i)=>{
     const it=el('div','item');
-    it.innerHTML=`<div class="nm"><b class="ltr">${esc(u.line||'L1')}.${esc(u.addr||'')}</b><small>${esc(u.name||'')}</small></div>
+    it.innerHTML=`<div class="nm"><b class="ltr">${esc(u.line||'L1')}.${esc(u.addr||'')}</b><small>${esc(roomNameById(u.room)||u.name||'— ללא חדר —')}</small></div>
+      <select data-i="${i}" style="flex:1;max-width:190px">${roomOptions(u.room)}</select>
       <button class="btn danger sm">הסר</button>`;
+    it.querySelector('select').onchange=e=>{ units[i].room=e.target.value; units[i].name=roomNameById(e.target.value); saveUnits(p,cfg,units,host); };
     it.querySelector('button').onclick=()=>{ units.splice(i,1); saveUnits(p,cfg,units,host); };
     list.appendChild(it);
   });
@@ -1351,17 +1364,17 @@ function renderAcMap(host, p, cfg){
   add.innerHTML=`<div class="row">
       <div class="field" style="flex:1"><label>LINE</label><input id="newline" class="ltr" placeholder="L1" value="L1"></div>
       <div class="field" style="flex:1"><label>כתובת</label><input id="newaddr" class="ltr" placeholder="100"></div>
-      <div class="field" style="flex:2"><label>שם (כשם החדר)</label><input id="newname" placeholder="חדר הורים"></div>
+      <div class="field" style="flex:2"><label>חדר</label><select id="newroom">${roomOptions('')}</select></div>
     </div>
     <button class="btn primary sm" id="adduid">הוסף יחידה</button>`;
   host.appendChild(add);
   add.querySelector('#adduid').onclick=()=>{
     const line=(add.querySelector('#newline').value||'L1').trim();
     const addr=(add.querySelector('#newaddr').value||'').trim();
-    const name=(add.querySelector('#newname').value||'').trim();
+    const room=add.querySelector('#newroom').value;
     if(!addr) return toast('הזן כתובת יחידה');
-    if(!name) return toast('הזן שם (כשם החדר)');
-    units.push({line, addr, name}); saveUnits(p,cfg,units,host);
+    if(!room) return toast('בחר חדר');
+    units.push({line, addr, room, name:roomNameById(room)}); saveUnits(p,cfg,units,host);
   };
 }
 async function saveUnits(p,cfg,units,host){
