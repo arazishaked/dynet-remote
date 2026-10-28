@@ -355,6 +355,22 @@ details.dev>summary::-webkit-details-marker{display:none}
 }
 .grid2{display:grid;grid-template-columns:2fr 1fr;gap:10px}
 /* technician room-rename bar */
+/* end-user login / loading overlay */
+.userov{position:fixed;inset:0;z-index:1000;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
+.userov-box{width:100%;max-width:380px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;display:flex;flex-direction:column;gap:11px}
+.userov-box h2{margin:2px 0;font-size:20px}
+.userov-box input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:11px;color:var(--fg);padding:12px 13px;font-size:16px;outline:none}
+.userov-box input:focus{border-color:var(--accent)}
+.uov-note{font-size:13px;color:var(--muted);line-height:1.55}
+.uov-row{display:flex;gap:10px;margin-top:4px}
+.uov-row .btn{flex:1}
+.uov-link{font-size:13px;color:var(--muted);text-decoration:underline;text-align:center;margin-top:4px}
+.uov-brand{display:flex;align-items:center;gap:9px;font-size:16px;margin-bottom:4px}
+.uov-brand .uov-logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#ffb062);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px}
+.uov-load{display:flex;flex-direction:column;align-items:center;gap:14px;padding:26px 0;color:var(--muted)}
+.spin{display:inline-block;width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:uspin .7s linear infinite}
+@keyframes uspin{to{transform:rotate(360deg)}}
+.uov-list{display:flex;flex-direction:column;gap:8px}
 .rnbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;margin-bottom:10px;border:1px dashed var(--line);border-radius:12px;background:var(--card);font-size:13px}
 .rnbar>span{flex:1;min-width:0}
 .rnbar .rename{display:flex;gap:6px;flex:1;width:100%}
@@ -1202,6 +1218,22 @@ const Backend = {
     return data;
   },
   async signOut(){ const sb = sbClient(); if(sb) await sb.auth.signOut(); },
+  // Send a password-reset email. The link brings the user back to redirectTo in recovery mode.
+  async resetPassword(email, redirectTo){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.auth.resetPasswordForEmail((email||'').trim(), redirectTo ? { redirectTo } : undefined);
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  // Set a new password (used after the user follows the reset link / while signed in).
+  async updatePassword(newPassword){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.auth.updateUser({ password:newPassword });
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  // Subscribe to auth events (e.g. PASSWORD_RECOVERY when a reset link is opened).
+  onAuth(cb){ const sb = sbClient(); if(sb) sb.auth.onAuthStateChange((e,s)=>cb(e,s)); },
   async session(){ const sb = sbClient(); if(!sb) return null; const { data } = await sb.auth.getSession(); return data.session; },
   async me(){
     const sb = sbClient(); if(!sb) return null;
@@ -1211,6 +1243,13 @@ const Backend = {
   },
 
   /* ── technician ── */
+  // Mark the current account as a technician (the admin site calls this on login/registration,
+  // so anyone registering there becomes a tech reliably without manual SQL).
+  async ensureTechProfile(){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) return;
+    await sb.from('profiles').update({ role:'tech' }).eq('id', user.id);
+  },
   async myProjects(){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data, error } = await sb.from('projects').select('*').order('updated_at', { ascending:false });
@@ -1297,7 +1336,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1027-2059";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-0655";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -3430,7 +3469,112 @@ $('#backBtn').addEventListener('click', () => { lastArea = null; go({ tab:'areas
 $('#linkChip').addEventListener('click', () => go({ tab:'setup' }));
 document.addEventListener('click', e => { const r = e.target.closest('[data-area]'); if(r && route.area==null) go({ tab:'areas', area:+r.dataset.area }); });
 
+/* ───────── End-user app: login gate + load the project assigned by the technician ─────────
+   The user never picks a file or touches Dropbox — the app pulls the project (config + .dlj) that
+   the technician assigned, straight from the server, and renders it locked. */
+function uov(html){ let o=$('#userov'); if(!o){ o=document.createElement('div'); o.id='userov'; document.body.appendChild(o); }
+  o.className='userov'; o.innerHTML=`<div class="userov-box">${html}</div>`; return o; }
+function uovRemove(){ const o=$('#userov'); if(o) o.remove(); }
+const uLoad = msg => `<div class="uov-load"><span class="spin"></span><div>${esc(msg)}</div></div>`;
+const uBrand = `<div class="uov-brand"><span class="uov-logo">◐</span><b>DyNet Remote</b></div>`;
+
+async function userBoot(){
+  if(/type=recovery/.test(location.hash||'')){ Backend.onAuth(ev=>{ if(ev==='PASSWORD_RECOVERY') userNewPassword(); }); return userNewPassword(); }
+  uov(uBrand+uLoad('מתחבר…'));
+  let who=null; try{ who=await Backend.me(); }catch(e){}
+  if(!who||!who.user) return userLogin();
+  return userLoadProject();
+}
+function userLogin(){
+  uov(`${uBrand}
+    <h2>התחברות</h2>
+    <div class="uov-note">התחבר עם המשתמש שקיבלת מהטכנאי, או הירשם וצור קשר עם הטכנאי כדי שישייך לך פרויקט.</div>
+    <input id="uem" class="ltr" type="email" placeholder="אימייל" autocomplete="email">
+    <input id="unm" placeholder="שם (ברישום)" autocomplete="name">
+    <input id="upw" class="ltr" type="password" placeholder="סיסמה" autocomplete="current-password">
+    <div class="uov-row"><button class="btn primary" id="ulogin">התחבר</button><button class="btn" id="ureg">הרשמה</button></div>
+    <a href="#" id="uforgot" class="uov-link">שכחת סיסמה?</a>`);
+  const em=()=>$('#uem').value.trim(), pw=()=>$('#upw').value, nm=()=>$('#unm').value.trim();
+  const net=e=>/fetch|network/i.test(e&&e.message||'')?'אין חיבור לשרת. בדוק אינטרנט.':(e&&e.message);
+  $('#ulogin').onclick=async e=>{ if(!em()||!pw()) return toast('אימייל + סיסמה'); e.target.disabled=true;
+    try{ await Backend.signIn(em(),pw()); userLoadProject(); }catch(err){ toast(net(err)||'ההתחברות נכשלה',6000); e.target.disabled=false; } };
+  $('#ureg').onclick=async e=>{ if(!em()||pw().length<6) return toast('אימייל + סיסמה (6 תווים לפחות)'); e.target.disabled=true;
+    try{ await Backend.signUp(em(),pw(),{full_name:nm(),role:'user'}); toast('נרשמת! אם מופעל אימות מייל — אשר ואז התחבר.',7000);
+      try{ await Backend.signIn(em(),pw()); userLoadProject(); }catch(_){ e.target.disabled=false; } }
+    catch(err){ toast(net(err)||'הרישום נכשל',6000); e.target.disabled=false; } };
+  $('#uforgot').onclick=async e=>{ e.preventDefault(); if(!em()) return toast('הזן קודם אימייל בשדה למעלה');
+    try{ await Backend.resetPassword(em(), location.href.split('#')[0]); toast('נשלח אליך מייל לאיפוס סיסמה.',8000); }catch(err){ toast(net(err)||'השליחה נכשלה',6000); } };
+}
+function userNewPassword(){
+  uov(`${uBrand}<h2>בחירת סיסמה חדשה</h2><div class="uov-note">בחר סיסמה חדשה (6 תווים לפחות).</div>
+    <input id="unp" class="ltr" type="password" placeholder="סיסמה חדשה" autocomplete="new-password">
+    <div class="uov-row"><button class="btn primary" id="usetpw">שמור סיסמה</button></div>`);
+  $('#usetpw').onclick=async e=>{ const v=$('#unp').value; if(v.length<6) return toast('6 תווים לפחות'); e.target.disabled=true;
+    try{ await Backend.updatePassword(v); toast('הסיסמה עודכנה ✅',4000); setTimeout(()=>{ location.hash=''; location.reload(); },1200); }
+    catch(err){ toast(err.message||'העדכון נכשל',6000); e.target.disabled=false; } };
+}
+async function userLoadProject(){
+  uov(uBrand+uLoad('טוען את הפרויקט…'));
+  let projs=[]; try{ projs=await Backend.assignedProjects(); }catch(e){ return userError('טעינה נכשלה: '+e.message); }
+  if(!projs.length) return userNoProject();
+  if(projs.length===1) return userOpenProject(projs[0]);
+  // more than one assigned → let the user choose
+  uov(`${uBrand}<h2>בחר פרויקט</h2><div class="uov-note">שויכו אליך כמה פרויקטים.</div><div id="uplist" class="uov-list"></div>`);
+  const list=$('#uplist');
+  projs.forEach(p=>{ const b=document.createElement('button'); b.className='btn'; b.style.width='100%'; b.textContent=p.name; b.onclick=()=>userOpenProject(p); list.appendChild(b); });
+  const out=document.createElement('button'); out.className='btn ghost'; out.style.marginTop='10px'; out.textContent='התנתק'; out.onclick=async()=>{ await Backend.signOut(); location.reload(); }; list.appendChild(out);
+}
+function userNoProject(){
+  uov(`${uBrand}<h2>אין עדיין פרויקט</h2>
+    <div class="uov-note">החשבון שלך נוצר, אבל הטכנאי עוד לא שייך לך פרויקט. פנה לטכנאי עם האימייל שאיתו נרשמת, ואז רענן.</div>
+    <div class="uov-row"><button class="btn primary" id="uretry">רענן</button><button class="btn ghost" id="uout">התנתק</button></div>`);
+  $('#uretry').onclick=()=>userLoadProject();
+  $('#uout').onclick=async()=>{ await Backend.signOut(); location.reload(); };
+}
+function userError(msg){
+  uov(`${uBrand}<h2>שגיאה</h2><div class="uov-note">${esc(msg)}</div>
+    <div class="uov-row"><button class="btn primary" id="uretry">נסה שוב</button><button class="btn ghost" id="uout">התנתק</button></div>`);
+  $('#uretry').onclick=()=>userLoadProject();
+  $('#uout').onclick=async()=>{ await Backend.signOut(); location.reload(); };
+}
+async function userOpenProject(proj){
+  uov(uBrand+uLoad('טוען את הפרויקט…'));
+  try{
+    const buf=await Backend.downloadBlob(proj.id);
+    const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
+    uovRemove();
+    setProject(parsed, buf);
+    P.tech = Object.assign({ names:{}, includeAC:true }, proj.config||{});
+    cfg.includeAC = P.tech.includeAC!=null ? P.tech.includeAC : true; P._uc=null;
+    P._server = { id:proj.id, version:proj.version||1 };
+    render(); connect();
+    startUserSync(proj.id);
+  }catch(e){ userError('טעינת הפרויקט נכשלה: '+e.message); }
+}
+let _userSync=null;
+function startUserSync(projectId){
+  if(_userSync) clearInterval(_userSync);
+  _userSync=setInterval(async()=>{
+    if(!P || !P._server || document.querySelector('.modal-ov')) return;
+    try{ const v=await Backend.projectVersion(projectId);
+      if(v!=null && P._server && v!==P._server.version){
+        const projs=await Backend.assignedProjects(); const proj=projs.find(x=>x.id===projectId);
+        if(proj){ const buf=await Backend.downloadBlob(projectId); const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
+          const keep={tab:route.tab, area:(route.area!=null&&parsed.areas[route.area])?route.area:null};
+          setProject(parsed, buf); P.tech=Object.assign({names:{},includeAC:true}, proj.config||{}); cfg.includeAC=P.tech.includeAC; P._uc=null;
+          P._server={id:projectId, version:v}; route=keep; render(); toast('הפרויקט עודכן ✅',4000);
+        }
+      }
+    }catch(e){}
+  }, 30000);
+}
+
 (async function boot(){
+  // End-user app with a reachable server → gate on login and load the assigned project.
+  if(USER && typeof Backend!=='undefined' && Backend.ready()){
+    route = { tab:'areas', area:null };
+    return userBoot();
+  }
   let p = store.get('project', null);
   if(!p){ try{ const s=$('#sampleProject').textContent.trim(); if(s && s[0]==='{'){ p=JSON.parse(s); p.sample=true; } }catch(e){} }
   if(p){ P = p; P.edits = P.edits || {}; }
