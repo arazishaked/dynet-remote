@@ -1244,13 +1244,14 @@ const Backend = {
   },
 
   /* ── technician ── */
-  // Mark the current account as a technician (the admin site calls this on login/registration,
-  // so anyone registering there becomes a tech reliably without manual SQL).
-  async ensureTechProfile(){
+  // Set the current account's role explicitly. Called ONCE at registration:
+  // the admin site grants 'tech', the consumer app grants 'user'. Never on a plain login.
+  async setRole(role){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data:{ user } } = await sb.auth.getUser(); if(!user) return;
-    await sb.from('profiles').update({ role:'tech' }).eq('id', user.id);
+    await sb.from('profiles').update({ role }).eq('id', user.id);
   },
+  async ensureTechProfile(){ return this.setRole('tech'); },
   async myProjects(){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data, error } = await sb.from('projects').select('*').order('updated_at', { ascending:false });
@@ -1350,7 +1351,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-0726";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-0814";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -3514,7 +3515,7 @@ function userLogin(){
     try{ await Backend.signIn(em(),pw()); userLoadProject(); }catch(err){ toast(net(err)||'ההתחברות נכשלה',6000); e.target.disabled=false; } };
   $('#ureg').onclick=async e=>{ if(!em()||pw().length<6) return toast('אימייל + סיסמה (6 תווים לפחות)'); e.target.disabled=true;
     try{ await Backend.signUp(em(),pw(),{full_name:nm(),role:'user'}); toast('נרשמת! אם מופעל אימות מייל — אשר ואז התחבר.',7000);
-      try{ await Backend.signIn(em(),pw()); userLoadProject(); }catch(_){ e.target.disabled=false; } }
+      try{ await Backend.signIn(em(),pw()); await Backend.setRole('user').catch(()=>{}); userLoadProject(); }catch(_){ e.target.disabled=false; } }
     catch(err){ toast(net(err)||'הרישום נכשל',6000); e.target.disabled=false; } };
   $('#uforgot').onclick=async e=>{ e.preventDefault(); if(!em()) return toast('הזן קודם אימייל בשדה למעלה');
     try{ await Backend.resetPassword(em(), location.href.split('#')[0]); toast('נשלח אליך מייל לאיפוס סיסמה.',8000); }catch(err){ toast(net(err)||'השליחה נכשלה',6000); } };

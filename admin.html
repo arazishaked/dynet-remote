@@ -860,13 +860,14 @@ const Backend = {
   },
 
   /* ── technician ── */
-  // Mark the current account as a technician (the admin site calls this on login/registration,
-  // so anyone registering there becomes a tech reliably without manual SQL).
-  async ensureTechProfile(){
+  // Set the current account's role explicitly. Called ONCE at registration:
+  // the admin site grants 'tech', the consumer app grants 'user'. Never on a plain login.
+  async setRole(role){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data:{ user } } = await sb.auth.getUser(); if(!user) return;
-    await sb.from('profiles').update({ role:'tech' }).eq('id', user.id);
+    await sb.from('profiles').update({ role }).eq('id', user.id);
   },
+  async ensureTechProfile(){ return this.setRole('tech'); },
   async myProjects(){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { data, error } = await sb.from('projects').select('*').order('updated_at', { ascending:false });
@@ -1102,8 +1103,15 @@ async function boot(){
   let who=null; try{ who = await Backend.me(); }catch(e){}
   state.me = who;
   if(!who || !who.user){ return renderLogin(); }
-  // This is the technician site — make sure the account is marked as a technician.
-  if(!who.profile || who.profile.role !== 'tech'){ try{ await Backend.ensureTechProfile(); }catch(e){} }
+  // A non-technician account (e.g. a consumer who registered in the user app) may NOT use the admin.
+  if(!who.profile || who.profile.role !== 'tech'){
+    $('#whoami').textContent = who.user.email;
+    $('#app').innerHTML = `<div class="card" style="max-width:440px;margin:30px auto"><h2>החשבון הזה אינו טכנאי</h2>
+      <div class="note">האימייל הזה רשום כמשתמש (צרכן), לא כטכנאי. אתר הניהול מיועד לטכנאים בלבד. התחבר עם חשבון טכנאי, או הירשם כאן כדי ליצור חשבון טכנאי חדש.</div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="out">התנתק</button></div></div>`;
+    $('#out').onclick = async()=>{ await Backend.signOut(); location.reload(); };
+    return;
+  }
   $('#whoami').textContent = who.user.email + ' · טכנאי';
   await loadProjects();
   renderDash();
@@ -1131,7 +1139,7 @@ function renderLogin(){
     try{ await Backend.signIn(em(),pw()); location.reload(); }catch(err){ toast(net(err)||'ההתחברות נכשלה',6000); e.target.disabled=false; } };
   $('#reg').onclick = async e => { if(!em()||pw().length<6) return toast('אימייל + סיסמה (6 תווים לפחות)'); e.target.disabled=true;
     try{ await Backend.signUp(em(),pw(),{full_name:nm(),role:'tech'}); toast('נרשמת! אם מופעל אימות מייל — אשר ואז התחבר.',7000);
-      try{ await Backend.signIn(em(),pw()); location.reload(); }catch(_){ e.target.disabled=false; } }
+      try{ await Backend.signIn(em(),pw()); await Backend.setRole('tech'); location.reload(); }catch(_){ e.target.disabled=false; } }
     catch(err){ toast(net(err)||'הרישום נכשל',6000); e.target.disabled=false; } };
 }
 
