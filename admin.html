@@ -1097,7 +1097,7 @@ function lightingFloors(P){
 
 /* ---- state ---- */
 const state = { me:null, projects:[], sel:null, parsed:null, users:[], assigned:[], q:'' };
-const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95, cmIp:'', cmPort:10102, acUnits:[] }, (p && p.config) || {});
+const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95, cmIp:'', cmPort:10102, cmExtIp:'', cmExtPort:'', acUnits:[] }, (p && p.config) || {});
 
 /* ---- boot ---- */
 function renderNewPassword(){
@@ -1242,9 +1242,14 @@ function renderDetail(){
     <div class="seg" id="acseg" style="margin-top:10px"><button data-ac="1" aria-pressed="${cfg.includeAC}">הצג מיזוג</button>
       <button data-ac="0" aria-pressed="${!cfg.includeAC}">בלי מיזוג</button></div>
     <div class="row" style="margin-top:10px">
-      <div class="field" style="flex:2"><label>כתובת ה-CoolMaster</label><input id="cmip" class="ltr" placeholder="192.168.1.50" value="${esc(cfg.cmIp||'')}"></div>
-      <div class="field" style="flex:1"><label>פורט <small>(ברירת מחדל 10102)</small></label><input id="cmport" class="ltr" inputmode="numeric" value="${esc(cfg.cmPort||10102)}"></div>
+      <div class="field" style="flex:2"><label>כתובת מקומית (בבית)</label><input id="cmip" class="ltr" placeholder="192.168.1.50" value="${esc(cfg.cmIp||'')}"></div>
+      <div class="field" style="flex:1"><label>פורט <small>(10102)</small></label><input id="cmport" class="ltr" inputmode="numeric" value="${esc(cfg.cmPort||10102)}"></div>
     </div>
+    <div class="row">
+      <div class="field" style="flex:2"><label>כתובת חיצונית <small>(ריק = ככתובת החיצונית של הפרויקט)</small></label><input id="cmextip" class="ltr" placeholder="${esc(cfg.extBase||'myhome.ddns.net')}" value="${esc(cfg.cmExtIp||'')}"></div>
+      <div class="field" style="flex:1"><label>פורט חיצוני <small>(ריק = 10102)</small></label><input id="cmextport" class="ltr" inputmode="numeric" value="${esc(cfg.cmExtPort||'')}"></div>
+    </div>
+    <div class="note">מרחוק, הראוטר צריך להעביר (port-forward) את הפורט החיצוני אל ה-CoolMaster. בדרך כלל אותה כתובת חיצונית של התאורה, פורט 10102.</div>
     <button class="btn primary" id="savecm" style="margin-top:4px">שמור מיזוג</button>
     <h2 style="margin-top:18px">שיוך יחידות מיזוג לחדרים</h2>
     <div class="note">כל יחידת CoolMaster (מזהה כמו <b class="ltr">L1.100</b>) משויכת לחדר. המשתמש יראה אותה בתוך אותו חדר. את המזהים אפשר לראות בממשק של ה-CoolMaster או באפליקציית המשתמש אחרי חיבור.</div>
@@ -1256,9 +1261,12 @@ function renderDetail(){
   });
   ac.querySelector('#savecm').onclick=async e=>{
     const on=ac.querySelector('#acseg button[aria-pressed="true"]').dataset.ac==='1';
+    const clean=s=>(s||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,'');
     const nc=Object.assign({},cfg,{ includeAC:on,
-      cmIp:(ac.querySelector('#cmip').value||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,''),
-      cmPort:+ac.querySelector('#cmport').value||10102 });
+      cmIp:clean(ac.querySelector('#cmip').value),
+      cmPort:+ac.querySelector('#cmport').value||10102,
+      cmExtIp:clean(ac.querySelector('#cmextip').value),
+      cmExtPort:+ac.querySelector('#cmextport').value||'' });
     e.target.disabled=true;
     try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('הגדרות המיזוג נשמרו'); }
     catch(err){ toast(err.message,6000); e.target.disabled=false; }

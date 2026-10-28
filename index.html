@@ -321,29 +321,29 @@ details.dev>summary::-webkit-details-marker{display:none}
 .ac-b[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
 .ac-b:active{transform:scale(.96)}
 /* climate (A/C) card — compact, shown at the top beside the brightness ring */
-.clim-col{display:flex;flex-direction:column;gap:10px;width:100%}
-.climate{border:1px solid var(--line);border-radius:18px;background:var(--card);padding:12px 11px;display:flex;flex-direction:column;gap:11px}
+.clim-col{display:flex;flex-direction:column;gap:8px;width:100%}
+.climate{border:1px solid var(--line);border-radius:15px;background:var(--card);padding:9px 10px;display:flex;flex-direction:column;gap:7px}
 .climate.on{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent)}
 .cl-top{display:flex;align-items:center;gap:6px}
-.cl-nm{font-size:13px;font-weight:650;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cl-pw{flex:none;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center}
-.cl-pw svg{width:18px;height:18px}
+.cl-nm{font-size:12.5px;font-weight:650;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cl-pw{flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center}
+.cl-pw svg{width:16px;height:16px}
 .cl-pw[aria-pressed="true"]{border-color:var(--accent);color:#fff;background:var(--accent)}
 .cl-set{display:flex;align-items:center;justify-content:center;gap:8px}
-.cl-step{flex:none;width:36px;height:36px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font-size:22px;font-weight:400;line-height:1;display:flex;align-items:center;justify-content:center}
+.cl-step{flex:none;width:30px;height:30px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font-size:19px;font-weight:400;line-height:1;display:flex;align-items:center;justify-content:center}
 .cl-step:active{transform:scale(.94);border-color:var(--accent);color:var(--accent)}
-.cl-read{text-align:center;min-width:72px}
-.cl-big{font-size:40px;font-weight:300;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.cl-deg{font-size:22px;color:var(--muted)}
-.cl-room{font-size:11.5px;color:var(--muted);margin-top:3px}
+.cl-read{text-align:center;min-width:66px}
+.cl-big{font-size:30px;font-weight:300;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.cl-deg{font-size:17px;color:var(--muted)}
+.cl-room{font-size:11px;color:var(--muted);margin-top:1px}
 .cl-room b{color:var(--fg);font-weight:600}
 .cl-mode{display:flex;gap:6px}
-.cl-md{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 2px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--muted);font-size:11px;font-weight:600}
-.cl-md svg{width:19px;height:19px}
+.cl-md{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px 2px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);font-size:11px;font-weight:600}
+.cl-md svg{width:16px;height:16px}
 .cl-md[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
 .cl-md:active{transform:scale(.96)}
 .cl-fan{display:flex;gap:5px}
-.cl-fb{flex:1;padding:7px 2px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--fg);font-size:11px;font-weight:600}
+.cl-fb{flex:1;padding:6px 2px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:10.5px;font-weight:600}
 .cl-fb[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
 .cl-fb:active{transform:scale(.95)}
 /* hero: ring centered in the middle column, climate card to one side */
@@ -351,9 +351,12 @@ details.dev>summary::-webkit-details-marker{display:none}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
 .ahero.has-climate .hero-side{min-width:0;align-self:center}
 .ahero.clim-only{display:flex}.ahero.clim-only .hero-side{width:100%;max-width:320px}
+/* phone: climate card beside a slightly smaller ring — keeps the top short so the sticky header doesn't cover it */
 @media(max-width:470px){
-  .ahero.has-climate{grid-template-columns:1fr;gap:14px}
-  .ahero.has-climate .hero-side{order:-1;justify-self:stretch}
+  .ahero.has-climate{grid-template-columns:minmax(130px,1fr) auto;gap:10px;align-items:start}
+  .ahero.has-climate .hero-side{justify-self:stretch;order:0}
+  .ahero.has-climate .hero-ring .ring{transform:scale(.8);transform-origin:top center;margin:-14px 0 -24px}
+  .ahero.has-climate .rhint{display:none}
   .ahero.has-climate .hero-spacer{display:none}
 }
 .grid2{display:grid;grid-template-columns:2fr 1fr;gap:10px}
@@ -1354,7 +1357,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1028-1258";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1028-1314";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1871,8 +1874,10 @@ const GW = {
    (native cmSend/cmPoll). The technician sets the CoolMaster address in the admin site
    (P.tech.cmIp / cmPort); unit→room mapping lives in P.tech.acUnits. */
 const CM = {
-  host(){ return (P && P.tech && P.tech.cmIp) || ''; },
-  port(){ return (P && P.tech && P.tech.cmPort) || 10102; },
+  // When the app is on the external link, reach the CoolMaster through the home's external address
+  // (its local IP isn't reachable from outside). Falls back to the project's external address.
+  host(){ const t=(P&&P.tech)||{}; if(cfg.activeConn==='ext') return t.cmExtIp || cfg.extBase || t.cmIp || ''; return t.cmIp || ''; },
+  port(){ const t=(P&&P.tech)||{}; if(cfg.activeConn==='ext') return t.cmExtPort || t.cmPort || 10102; return t.cmPort || 10102; },
   enabled(){ return !!this.host() && HAS_TCP; },
   units(){ return (P && P.tech && P.tech.acUnits) || []; },        // [{line, addr, room, name}]
   uid(u){ let L=String(u.line||'L1').trim(); if(!/^L/i.test(L)) L='L'+L; return L+'.'+String(u.addr||'').trim(); },
@@ -3162,12 +3167,31 @@ function renderUserSetup(m){
       </div>
       <div class="note">הכתובת והפורט המקומיים נקבעים ע״י הטכנאי ולכן נעולים. אתה עורך את הכתובת והפורט החיצוניים.</div>
     </section>
+    ${(P&&P.tech&&P.tech.cmIp) ? `<section class="card">
+      <h2>מיזוג · אבחון CoolMaster</h2>
+      <div class="note">כתובת: <b class="ltr">${esc(P.tech.cmIp)}:${esc(P.tech.cmPort||10102)}</b></div>
+      <div class="actions" style="margin-top:8px"><button class="btn primary" id="cmTest">בדוק חיבור (ls)</button></div>
+      <pre class="code" id="cmOut" style="white-space:pre-wrap;max-height:260px;overflow:auto;direction:ltr;text-align:left;margin-top:8px" hidden></pre>
+    </section>` : ''}
     ${NATIVE ? `<div class="note" style="text-align:center;margin-top:4px">build ${BUILD_ID && BUILD_ID[0]!=='/' ? esc(BUILD_ID) : '—'} · <a href="#" id="chkUpdate">בדוק עדכון</a></div>` : ''}`;
   m.querySelectorAll('#themeSeg button').forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.theme); m.querySelectorAll('#themeSeg button').forEach(x=>x.setAttribute('aria-pressed', x===b)); }));
   const reconnect = () => { saveCfg(); if(HAS_TCP) native({ kind:'tcpClose' }); connect(); setTimeout(()=>renderUserSetup(m), 500); };
   $('#extIp').addEventListener('change', e => { cfg.extBase = e.target.value.trim().replace(/^https?:\/\//,''); e.target.value=cfg.extBase; reconnect(); });
   $('#extPort').addEventListener('change', e => { cfg.extPort = (+e.target.value)||95; e.target.value=cfg.extPort; reconnect(); });
   $('#chkUpdate') && $('#chkUpdate').addEventListener('click', e => { e.preventDefault(); toast('בודק עדכון…', 3000); native({ kind:'appUpdate' }); });
+  $('#cmTest') && $('#cmTest').addEventListener('click', async e => {
+    const out=$('#cmOut'); out.hidden=false;
+    if(!HAS_TCP){ out.textContent='זמין רק באפליקציה בטלפון (צריך חיבור TCP נייטיב).'; return; }
+    out.textContent='שולח ls ל-'+CM.host()+':'+CM.port()+' …'; e.target.disabled=true;
+    try{
+      const raw = await CM.cmd('ls');
+      const units = CM.parseLs(raw);
+      out.textContent = '--- פלט גולמי (ls) ---\n' + (raw||'(ריק — אין תשובה)') +
+        '\n\n--- מה שהמערכת פירקה ('+units.length+' יחידות) ---\n' +
+        units.map(u=>`${u.uid}  on=${u.on}  set=${u.setTemp}  room=${u.roomTemp}  fan=${u.fan}  mode=${u.mode}`).join('\n');
+    }catch(err){ out.textContent='שגיאה: '+err.message; }
+    e.target.disabled=false;
+  });
 }
 function renderSetup(m){
   if(USER) return renderUserSetup(m);
