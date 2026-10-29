@@ -20,7 +20,17 @@ final class DyNetLink {
         if same { return true }
         close()
         guard let nwPort = NWEndpoint.Port(rawValue: p) else { return false }
-        let c = NWConnection(host: NWEndpoint.Host(h), port: nwPort, using: .tcp)
+        // TCP keepalive keeps the link alive through NAT/router idle timeouts (important on external/cellular)
+        // and detects a dropped connection quickly instead of hanging.
+        let tcpOpts = NWProtocolTCP.Options()
+        tcpOpts.enableKeepalive = true
+        tcpOpts.keepaliveIdle = 15
+        tcpOpts.keepaliveInterval = 8
+        tcpOpts.keepaliveCount = 3
+        tcpOpts.connectionTimeout = 8
+        tcpOpts.noDelay = true
+        let params = NWParameters(tls: nil, tcp: tcpOpts)
+        let c = NWConnection(host: NWEndpoint.Host(h), port: nwPort, using: params)
         host = h; port = p; conn = c
         let sem = DispatchSemaphore(value: 0)
         var ok = false
@@ -265,3 +275,4 @@ extension Bridge: UIDocumentPickerDelegate {
 extension UIWindowScene {
     var keyWindow: UIWindow? { windows.first { $0.isKeyWindow } ?? windows.first }
 }
+ 
