@@ -313,7 +313,7 @@ details.dev>summary::-webkit-details-marker{display:none}
 .cov-row{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;align-items:center;gap:10px}
 .cov-row .cov-ic{color:var(--muted);flex:none;display:flex}
 .cov-row .cov-ic svg{width:22px;height:22px}
-.cov-nm{font-size:14px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cov-nm{font-size:14px;font-weight:600;flex:1;min-width:0;line-height:1.25;overflow-wrap:anywhere}
 .cov-btns{display:flex;direction:ltr;gap:6px;flex:none}
 .cov-b{display:flex;flex-direction:column;align-items:center;gap:2px;width:54px;padding:7px 2px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--fg);transition:transform .1s,border-color .15s,color .15s}
 .cov-b svg{width:19px;height:19px}
@@ -1377,7 +1377,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1029-0933";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1029-0949";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2257,10 +2257,26 @@ const COVER_ICON = { curtain:CURTAIN_SVG, shade:BLINDS_SVG, blind:BLINDS_SVG, aw
 const COV_OPEN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
 const COV_STOP  = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2.4"/></svg>';
 const COV_CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
-function coverTile(a, type){
+// Inside a room the covers repeat the room name ("חדר הורים צלון שמאל"), which fills the row
+// and hides the part that tells them apart. Show only the distinguishing tail; if the name is
+// nothing but the room name, fall back to the system label ("צלון").
+function covLabel(a, roomName, type){
+  let nm = (areaName(a) || '').trim();
+  const rn = (roomName || '').trim();
+  if(rn){
+    const i = heNorm(nm).indexOf(heNorm(rn));   // heNorm is length-preserving, so i maps onto nm
+    if(i >= 0){
+      let cut = (nm.slice(0, i) + nm.slice(i + rn.length))
+        .replace(/[\s\-–—·•_,.|/\\]+/g,' ').trim();
+      nm = cut || sysLabel(type);
+    }
+  }
+  return nm;
+}
+function coverTile(a, type, roomName){
   return `<div class="cov-row" data-covarea="${a.id}">
     <span class="cov-ic">${COVER_ICON[type]||CURTAIN_SVG}</span>
-    <span class="cov-nm">${esc(areaName(a))}</span>
+    <span class="cov-nm">${esc(covLabel(a, roomName, type))}</span>
     <div class="cov-btns">
       <button class="cov-b" data-cov="${a.id}" data-p="1" aria-label="פתיחה">${COV_OPEN}<small>פתיחה</small></button>
       <button class="cov-b" data-cov="${a.id}" data-p="4" aria-label="עצירה">${COV_STOP}<small>עצירה</small></button>
@@ -2335,7 +2351,7 @@ document.addEventListener('click', e => {
 });
 const sysLabel = t => t==='ac' ? 'מיזוג' : (SYS_TYPES[t]||{}).he || t;
 // Bottom "systems in room" card handles covers only; A/C is a CoolMaster climate card at the top.
-const sysTiles = (type, areas) => `<div class="cov-grid">${areas.map(a=>coverTile(a,type)).join('')}</div>`;
+const sysTiles = (type, areas, roomName) => `<div class="cov-grid">${areas.map(a=>coverTile(a,type,roomName)).join('')}</div>`;
 const LIST_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>';
 const GRID_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>';
 function renderUserAreas(m){
@@ -2504,7 +2520,7 @@ function renderArea(m, a){
   if(coverList.length){
     const byType = {}; coverList.forEach(s => (byType[s.type]=byType[s.type]||[]).push(s.area));
     sysCard = `<section class="card"><h2><span class="seclbl">מערכות החדר</span></h2>
-      ${Object.keys(byType).map(t => `<div class="sys-group"><div class="sys-grp-t">${esc(sysLabel(t))}</div>${sysTiles(t, byType[t])}</div>`).join('')}</section>`;
+      ${Object.keys(byType).map(t => `<div class="sys-group"><div class="sys-grp-t">${esc(sysLabel(t))}</div>${sysTiles(t, byType[t], areaName(a))}</div>`).join('')}</section>`;
   }
   // A/C: CoolMaster units mapped to this room (by the technician), controlled directly.
   const cmUnits = (USER && acIncluded()) ? CM.unitsForRoom(a.id) : [];
