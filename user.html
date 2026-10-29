@@ -1377,7 +1377,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1029-0919";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1029-0933";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2040,6 +2040,20 @@ async function autoResolveBase(){
   if(cfg.extBase){ cfg.base = cfg.extBase; cfg.tcpPort = cfg.extPort||95; cfg.activeConn='ext'; return; }
   cfg.base = cfg.localBase || cfg.base; cfg.tcpPort = cfg.localPort||95; cfg.activeConn = cfg.localBase ? 'local' : '';
 }
+// Re-check which address (local/external) to use and switch immediately if it changed.
+let _netTimer = null;
+async function netCheck(announce){
+  if(!(USER && HAS_TCP && cfg.mode==='pdeg')){ if(announce) toast('בדיקת רשת זמינה באפליקציה בטלפון'); return; }
+  const prev = (cfg.base||'')+'|'+(cfg.activeConn||'');
+  await autoResolveBase();
+  if(((cfg.base||'')+'|'+(cfg.activeConn||'')) !== prev){
+    if(HAS_TCP) await native({ kind:'tcpClose' });
+    if(typeof CM!=='undefined') CM._ep=null;      // re-resolve the CoolMaster endpoint too
+    connect();
+    if(announce) toast('החיבור עבר ל'+(cfg.activeConn==='ext'?'כתובת חיצונית':'כתובת מקומית'),3500);
+  } else if(announce){ toast('החיבור יציב · '+(cfg.activeConn==='ext'?'חיצוני':'מקומי'),2500); }
+}
+function startNetCheck(){ if(_netTimer) return; _netTimer=setInterval(()=>netCheck(false), 120000); }   // every 2 min in the background
 async function connect(){
   setLink('wait','מתחבר…');
   link.info = null;
@@ -3249,6 +3263,8 @@ function renderUserSetup(m){
         <div class="field"><label for="extPort">פורט חיצוני</label><input id="extPort" class="ltr" inputmode="numeric" value="${esc(cfg.extPort||95)}"></div>
       </div>
       <div class="note">הכתובת והפורט המקומיים נקבעים ע״י הטכנאי ולכן נעולים. אתה עורך את הכתובת והפורט החיצוניים.</div>
+      <div class="actions" style="margin-top:10px"><button class="btn" id="netCheckBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>בדוק רשת עכשיו</button></div>
+      <div class="note">האפליקציה בודקת לבד כל 2 דקות אם לעבור בין מקומי לחיצוני. הכפתור מאלץ בדיקה מיידית.</div>
     </section>
     ${NATIVE ? `<div class="note" style="text-align:center;margin-top:4px">build ${BUILD_ID && BUILD_ID[0]!=='/' ? esc(BUILD_ID) : '—'} · <a href="#" id="chkUpdate">בדוק עדכון</a></div>` : ''}`;
   m.querySelectorAll('#themeSeg button').forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.theme); m.querySelectorAll('#themeSeg button').forEach(x=>x.setAttribute('aria-pressed', x===b)); }));
@@ -3256,6 +3272,7 @@ function renderUserSetup(m){
   $('#extIp').addEventListener('change', e => { cfg.extBase = e.target.value.trim().replace(/^https?:\/\//,''); e.target.value=cfg.extBase; reconnect(); });
   $('#extPort').addEventListener('change', e => { cfg.extPort = (+e.target.value)||95; e.target.value=cfg.extPort; reconnect(); });
   $('#chkUpdate') && $('#chkUpdate').addEventListener('click', e => { e.preventDefault(); toast('בודק עדכון…', 3000); native({ kind:'appUpdate' }); });
+  $('#netCheckBtn') && $('#netCheckBtn').addEventListener('click', async e => { e.target.disabled=true; toast('בודק רשת…',2000); await netCheck(true); e.target.disabled=false; });
 }
 function renderSetup(m){
   if(USER) return renderUserSetup(m);
@@ -3754,7 +3771,7 @@ async function userOpenProject(proj){
     cfg.includeAC = P.tech.includeAC!=null ? P.tech.includeAC : true; P._uc=null;
     applyUserConn(P.tech, parsed);
     P._server = { id:proj.id, version:proj.version||1 };
-    render(); connect();
+    render(); connect(); startNetCheck();
     startUserSync(proj.id);
   }catch(e){ userError('טעינת הפרויקט נכשלה: '+e.message); }
 }

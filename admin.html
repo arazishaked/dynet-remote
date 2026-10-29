@@ -1161,6 +1161,20 @@ function renderLogin(){
 /* ---- dashboard ---- */
 async function loadProjects(){ try{ state.projects = await Backend.myProjects(); }catch(e){ toast(e.message,5000); } }
 
+// Save a change into the project's CURRENT config (never a stale copy), so one save never wipes
+// another field. Always re-enables the button afterwards.
+async function saveConfig(changes, btn, okMsg){
+  const nc = Object.assign({}, cfgOf(state.sel), changes);
+  if(btn) btn.disabled = true;
+  try{
+    const saved = await Backend.saveProject(state.sel.id, { config:nc });
+    state.sel = saved; await loadProjects();
+    toast(okMsg || 'נשמר');
+    return saved;
+  }catch(err){ toast(err.message, 6000); }
+  finally{ if(btn) btn.disabled = false; }
+}
+
 function renderDash(){
   const app=$('#app'); app.innerHTML='';
   // projects card
@@ -1204,8 +1218,15 @@ function fillPlist(pl){
   });
 }
 async function selectProject(p){ state.sel=p; state.parsed=null; renderDash();
-  // if the project already has a stored file, pull it so we can list rooms
-  if(p.file_name){ try{ const buf=await Backend.downloadBlob(p.id); state.parsed=await DLJ.parseDljBuffer(buf, p.file_name); renderDetail(); }catch(e){ /* blob may be missing */ } }
+  // Folder-tracked: auto-pick the newest file in the Dropbox folder (even a brand-new file that was added).
+  if(p.dropbox_folder && Dbx.connected()){
+    try{
+      const newest = await Dbx.newestInFolder(p.dropbox_folder);
+      if(newest && newest.rev !== p.file_rev){ toast('נמצא קובץ חדש בתיקייה — מעדכן…'); await dbxUseFolder(state.sel, p.dropbox_folder); return; }
+    }catch(e){}
+  }
+  // otherwise just pull the stored file so we can list rooms
+  if(state.sel.file_name){ try{ const buf=await Backend.downloadBlob(state.sel.id); state.parsed=await DLJ.parseDljBuffer(buf, state.sel.file_name); renderDetail(); }catch(e){ /* blob may be missing */ } }
 }
 
 function renderDetail(){
@@ -1229,7 +1250,7 @@ function renderDetail(){
       const buf=await f.arrayBuffer();
       const parsed=await DLJ.parseDljBuffer(buf, f.name);
       await Backend.uploadBlob(p.id, buf);
-      const saved=await Backend.saveProject(p.id, { name:p.name, file_name:f.name, config:cfg });
+      const saved=await Backend.saveProject(p.id, { name:p.name, file_name:f.name, config:cfgOf(state.sel) });
       state.sel=saved; state.parsed=parsed; await loadProjects();
       toast('הקובץ הועלה · '+Object.keys(parsed.areas).length+' אזורים',5000);
       renderDash(); selectProject(saved);
@@ -1262,14 +1283,11 @@ function renderDetail(){
   ac.querySelector('#savecm').onclick=async e=>{
     const on=ac.querySelector('#acseg button[aria-pressed="true"]').dataset.ac==='1';
     const clean=s=>(s||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,'');
-    const nc=Object.assign({},cfg,{ includeAC:on,
+    await saveConfig({ includeAC:on,
       cmIp:clean(ac.querySelector('#cmip').value),
       cmPort:+ac.querySelector('#cmport').value||10102,
       cmExtIp:clean(ac.querySelector('#cmextip').value),
-      cmExtPort:+ac.querySelector('#cmextport').value||'' });
-    e.target.disabled=true;
-    try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('הגדרות המיזוג נשמרו'); }
-    catch(err){ toast(err.message,6000); e.target.disabled=false; }
+      cmExtPort:+ac.querySelector('#cmextport').value||'' }, e.target, 'הגדרות המיזוג נשמרו');
   };
   // --- connection (IP addresses + ports) ---
   const cc=el('div','card');
@@ -1286,14 +1304,11 @@ function renderDetail(){
     <button class="btn primary" id="saveconn" style="margin-top:6px">שמור כתובות</button>`;
   d.appendChild(cc);
   cc.querySelector('#saveconn').onclick=async e=>{
-    const nc=Object.assign({}, cfg, {
-      localBase:(cc.querySelector('#locip').value||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,''),
-      localPort:+cc.querySelector('#locport').value||95,
-      extBase:(cc.querySelector('#extip').value||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,''),
-      extPort:+cc.querySelector('#extport').value||95 });
-    e.target.disabled=true;
-    try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('הכתובות נשמרו'); }
-    catch(err){ toast(err.message,6000); e.target.disabled=false; }
+    const clean=s=>(s||'').trim().replace(/^https?:\/\//,'').replace(/\/+$/,'');
+    await saveConfig({
+      localBase:clean(cc.querySelector('#locip').value), localPort:+cc.querySelector('#locport').value||95,
+      extBase:clean(cc.querySelector('#extip').value),   extPort:+cc.querySelector('#extport').value||95
+    }, e.target, 'הכתובות נשמרו');
   };
   // --- room names (collapsed; folders per floor, each collapsed too) ---
   const rc=el('div','card');
@@ -1320,16 +1335,13 @@ function renderDetail(){
     body.appendChild(box);
     const save=el('button','btn primary','שמור שמות'); save.style.marginTop='12px';
     save.onclick=async()=>{
-      const names=Object.assign({}, cfg.names);
+      const names={};
       box.querySelectorAll('input[data-area]').forEach(inp=>{
         const id=inp.dataset.area; const v=inp.value.trim();
         const orig=(state.parsed.areas[id]&&state.parsed.areas[id].name)||'';
         if(!v || v===orig) delete names[id]; else names[id]=v;
       });
-      const nc=Object.assign({},cfg,{names});
-      save.disabled=true;
-      try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('השמות נשמרו'); }
-      catch(err){ toast(err.message,6000); save.disabled=false; }
+      await saveConfig({ names }, save, 'השמות נשמרו');
     };
     body.appendChild(save);
   }
@@ -1386,9 +1398,8 @@ function renderAcMap(host, p, cfg){
   };
 }
 async function saveUnits(p,cfg,units,host){
-  const nc=Object.assign({},cfg,{acUnits:units});
-  try{ const saved=await Backend.saveProject(p.id,{config:nc}); state.sel=saved; await loadProjects(); toast('השיוך נשמר'); if(host) renderAcMap(host,saved,cfgOf(saved)); }
-  catch(err){ toast(err.message,6000); }
+  const saved = await saveConfig({ acUnits:units }, null, 'השיוך נשמר');
+  if(saved && host) renderAcMap(host, saved, cfgOf(saved));
 }
 
 /* ---- Dropbox folder linking ---- */
@@ -1476,7 +1487,7 @@ async function dbxUseFolder(p, folder){
     const buf=await Dbx.download(newest.path_lower||newest.id);
     const parsed=await DLJ.parseDljBuffer(buf, newest.name);
     await Backend.uploadBlob(p.id, buf);
-    const saved=await Backend.saveProject(p.id, { name:p.name, file_name:newest.name, file_rev:newest.rev, dropbox_folder:folder, config:cfgOf(p) });
+    const saved=await Backend.saveProject(p.id, { name:p.name, file_name:newest.name, file_rev:newest.rev, dropbox_folder:folder, config:cfgOf(state.sel) });
     state.sel=saved; state.parsed=parsed; await loadProjects();
     toast('נטען מהתיקייה: '+newest.name, 6000);
     renderDash(); selectProject(saved);
