@@ -336,29 +336,32 @@ details.dev>summary::-webkit-details-marker{display:none}
 .ac-b:active{transform:scale(.96)}
 /* climate (A/C) card — compact, shown at the top beside the brightness ring */
 .clim-col{display:flex;flex-direction:column;gap:8px;width:100%}
-.climate{border:1px solid var(--line);border-radius:15px;background:var(--card);padding:9px 10px;display:flex;flex-direction:column;gap:7px}
-.climate.on{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent)}
+.climate{--cl:var(--accent);border:1px solid var(--line);border-radius:15px;background:var(--card);padding:9px 10px;display:flex;flex-direction:column;gap:7px}
+.climate.cool{--cl:#2f8dff}
+.climate.heat{--cl:#ff4d00}
+.climate.on{border-color:color-mix(in srgb,var(--cl) 60%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--cl) 24%,transparent);background:color-mix(in srgb,var(--cl) 10%,var(--card))}
 .cl-top{display:flex;align-items:center;gap:6px}
 .cl-nm{font-size:12.5px;font-weight:650;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cl-pw{flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center}
 .cl-pw svg{width:16px;height:16px}
-.cl-pw[aria-pressed="true"]{border-color:var(--accent);color:#fff;background:var(--accent)}
+.climate.on .cl-pw,.cl-pw[aria-pressed="true"]{border-color:var(--cl);color:#fff;background:var(--cl)}
 .cl-set{display:flex;align-items:center;justify-content:center;gap:8px}
 .cl-step{flex:none;width:30px;height:30px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font-size:19px;font-weight:400;line-height:1;display:flex;align-items:center;justify-content:center}
-.cl-step:active{transform:scale(.94);border-color:var(--accent);color:var(--accent)}
+.cl-step:active{transform:scale(.94);border-color:var(--cl);color:var(--cl)}
 .cl-read{text-align:center;min-width:66px}
 .cl-big{font-size:30px;font-weight:300;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.climate.on .cl-big{color:var(--cl)}
 .cl-deg{font-size:17px;color:var(--muted)}
 .cl-room{font-size:11px;color:var(--muted);margin-top:1px}
 .cl-room b{color:var(--fg);font-weight:600}
 .cl-mode{display:flex;gap:6px}
 .cl-md{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px 2px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);font-size:11px;font-weight:600}
 .cl-md svg{width:16px;height:16px}
-.cl-md[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
+.cl-md[aria-pressed="true"]{border-color:var(--cl);color:var(--cl);background:color-mix(in srgb,var(--cl) 13%,var(--bg))}
 .cl-md:active{transform:scale(.96)}
 .cl-fan{display:flex;gap:5px}
 .cl-fb{flex:1;padding:6px 2px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:10.5px;font-weight:600}
-.cl-fb[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
+.cl-fb[aria-pressed="true"]{border-color:var(--cl);color:var(--cl);background:color-mix(in srgb,var(--cl) 13%,var(--bg))}
 .cl-fb:active{transform:scale(.95)}
 /* "running A/C" indication at the top of the rooms list */
 .ac-active{display:flex;flex-direction:column;gap:8px}
@@ -1377,7 +1380,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1029-0949";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1029-1041";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2302,7 +2305,7 @@ function climateCard(unit){
   const mode = st.mode==='heat' ? 1 : 0;
   const on = !!st.on;
   const id = esc(uid);
-  return `<div class="climate${on?' on':''}" data-clim="${id}">
+  return `<div class="climate ${mode===1?'heat':'cool'}${on?' on':''}" data-clim="${id}">
     <div class="cl-top"><span class="cl-nm">${esc(unit.name||uid)}</span>
       <button class="cl-pw" data-acpw="${id}" aria-pressed="${on}" aria-label="הפעלה/כיבוי">${POWER_SVG}</button></div>
     <div class="cl-set">
@@ -2323,6 +2326,7 @@ function updateClimateCards(){
   document.querySelectorAll('.climate[data-clim]').forEach(card=>{
     const uid=card.dataset.clim, st=cmState[uid]; if(!st) return;
     card.classList.toggle('on', !!st.on);
+    const heat = st.mode==='heat'; card.classList.toggle('heat', heat); card.classList.toggle('cool', !heat);
     const pw=card.querySelector('.cl-pw'); if(pw) pw.setAttribute('aria-pressed', !!st.on);
     const tn=card.querySelector('[data-settemp]'); if(tn && st.setTemp!=null && card.dataset.touchTemp!=='1') tn.textContent=st.setTemp;
     const rn=card.querySelector('[data-roomtemp]'); if(rn) rn.textContent = st.roomTemp!=null ? st.roomTemp+'°' : '—';
@@ -2344,6 +2348,7 @@ document.addEventListener('click', e => {
     act(CM.setTemp(uid,t).then(()=>{ if(card) delete card.dataset.touchTemp; cmRefresh(); })); return; }
   const md=e.target.closest('.cl-md'); if(md){ const [uid,mode]=md.dataset.acmode.split(':');
     cmState[uid]=Object.assign({},cmState[uid],{mode}); md.parentElement.querySelectorAll('.cl-md').forEach(x=>x.setAttribute('aria-pressed',x===md));
+    const card=md.closest('.climate'); if(card){ card.classList.toggle('heat',mode==='heat'); card.classList.toggle('cool',mode!=='heat'); }
     act(CM.setMode(uid,mode).then(()=>cmRefresh())); return; }
   const fb=e.target.closest('.cl-fb'); if(fb){ const [uid,v]=fb.dataset.acfan.split(':');
     fb.parentElement.querySelectorAll('.cl-fb').forEach(x=>x.setAttribute('aria-pressed',x===fb));
