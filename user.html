@@ -365,12 +365,14 @@ details.dev>summary::-webkit-details-marker{display:none}
 .cl-fb:active{transform:scale(.95)}
 /* "running A/C" indication at the top of the rooms list */
 .ac-active{display:flex;flex-direction:column;gap:8px}
-.ac-live{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid var(--accent-border);border-radius:14px;background:var(--accent-soft);color:var(--fg);text-align:start}
+.ac-live{--cl:var(--accent);display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid color-mix(in srgb,var(--cl) 55%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--cl) 12%,var(--card));color:var(--fg);text-align:start}
+.ac-live.cool{--cl:#2f8dff}
+.ac-live.heat{--cl:#ff4d00}
 .ac-live:active{transform:scale(.99)}
-.ac-live .al-ic{color:var(--accent);display:flex;flex:none}.ac-live .al-ic svg{width:22px;height:22px}
+.ac-live .al-ic{color:var(--cl);display:flex;flex:none}.ac-live .al-ic svg{width:22px;height:22px}
 .ac-live .al-nm{font-weight:650;font-size:14px}
 .ac-live .al-t{color:var(--muted);font-size:12.5px;margin-inline-start:auto;white-space:nowrap}
-.ac-live .al-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 9px 1px var(--glow)}
+.ac-live .al-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--cl);box-shadow:0 0 9px 1px color-mix(in srgb,var(--cl) 65%,transparent)}
 /* hero: ring centered in the middle column, climate card to one side */
 .ahero.has-climate{display:grid;grid-template-columns:minmax(118px,1fr) auto minmax(118px,1fr);gap:12px;align-items:center;flex-direction:row}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
@@ -1380,7 +1382,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1029-1041";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1029-1050";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1988,7 +1990,7 @@ function renderAcActive(){
   if(!on.length){ box.innerHTML=''; return; }
   box.innerHTML = `<section class="floor"><div class="floor-title">מזגנים פועלים</div>
     <div class="ac-active">${on.map(x=>{ const st=cmState[x.uid]||{}; const rid=CM.roomOf(x.u);
-      return `<button class="ac-live" ${rid!=null?`data-area="${rid}" data-roomtile="${rid}"`:''}>
+      return `<button class="ac-live ${st.mode==='heat'?'heat':'cool'}" ${rid!=null?`data-area="${rid}" data-roomtile="${rid}"`:''}>
         <span class="al-ic">${AC_SVG}</span>
         <span class="al-nm">${esc(cmRoomLabel(x.uid))}</span>
         <span class="al-t">${st.setTemp!=null?st.setTemp+'°':''}${st.roomTemp!=null?` · חדר ${st.roomTemp}°`:''}</span>
