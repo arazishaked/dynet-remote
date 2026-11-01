@@ -373,6 +373,58 @@ details.dev>summary::-webkit-details-marker{display:none}
 .ac-live .al-nm{font-weight:650;font-size:14px}
 .ac-live .al-t{color:var(--muted);font-size:12.5px;margin-inline-start:auto;white-space:nowrap}
 .ac-live .al-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--cl);box-shadow:0 0 9px 1px color-mix(in srgb,var(--cl) 65%,transparent)}
+/* ── scenes (תרחישים) ── */
+.scenes-wrap{display:flex;flex-direction:column;gap:12px}
+.scenes-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.scenes-head h2{font-size:17px;margin:0 0 2px;font-weight:700}
+.scene-list{display:flex;flex-direction:column;gap:10px}
+.scene-card{display:flex;align-items:stretch;gap:8px}
+.scene-card.confirm{align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--card);gap:10px}
+.scene-run{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--fg);text-align:start}
+.scene-run:active{transform:scale(.99)}
+.scene-run.running{opacity:.6}
+.scene-run .sc-ic{flex:none;width:38px;height:38px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
+.scene-run .sc-ic svg{width:17px;height:17px;margin-inline-start:2px}
+.scene-run.running .sc-ic{background:var(--muted)}
+.sc-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sc-nm{font-weight:650;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-meta{color:var(--muted);font-size:12px}
+.scene-ops{display:flex;flex-direction:column;gap:6px;justify-content:center;flex:none}
+.iconbtn{width:40px;height:33px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center}
+.iconbtn svg{width:16px;height:16px}
+.iconbtn:active{transform:scale(.95);border-color:var(--accent);color:var(--accent)}
+.btn.scbtn{padding:9px 15px;font-size:13px;border-radius:10px}
+.btn.danger{color:#fff;background:#e5564b;border-color:transparent}
+.scene-edit{gap:12px}
+.sc-sec{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:10px 14px}
+.sc-sec h3{margin:2px 0 6px;font-size:13px;color:var(--accent-text);font-weight:700}
+.sc-row{display:flex;align-items:center;gap:10px;padding:8px 0}
+.sc-row+.sc-row{border-top:1px solid var(--line)}
+.sc-rl{flex:1;min-width:0;font-size:14px;font-weight:550;overflow-wrap:anywhere}
+.tri{display:flex;flex:none;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tri button{min-width:48px;padding:8px 6px;border:0;background:var(--bg);color:var(--muted);font-size:12.5px;font-weight:600}
+.tri button+button{border-inline-start:1px solid var(--line)}
+.tri button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.sc-actions{display:flex;gap:10px;margin-top:2px}
+.sc-actions .btn{flex:1}
+.seg.typeSeg button,.seg.actSeg button{flex:1}
+.add-fields{display:flex;flex-direction:column;gap:10px;margin:10px 0 2px}
+.add-fields input[type=range]{width:100%}
+.addsec{border-style:dashed}
+.act-row{display:flex;align-items:center;gap:10px;padding:8px 0}
+.act-row+.act-row{border-top:1px solid var(--line)}
+.act-tx{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
+.tempstep{display:flex;align-items:center;gap:14px;justify-content:center}
+.tempstep button{width:40px;height:40px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--fg);font-size:22px;line-height:1}
+.tempstep button:active{border-color:var(--accent);color:var(--accent)}
+.tempstep b{font-size:22px;font-weight:600;min-width:52px;text-align:center}
+/* quick-run strip on the rooms page */
+.scene-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;-webkit-overflow-scrolling:touch}
+.scene-chip{flex:none;display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--fg);font-weight:600;font-size:13.5px}
+.scene-chip:active{transform:scale(.97)}
+.scene-chip.running{opacity:.6}
+.scene-chip .sc-ic{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
+.scene-chip .sc-ic svg{width:12px;height:12px;margin-inline-start:1px}
 /* hero: ring centered in the middle column, climate card to one side */
 .ahero.has-climate{display:grid;grid-template-columns:minmax(118px,1fr) auto minmax(118px,1fr);gap:12px;align-items:center;flex-direction:row}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
@@ -1378,11 +1430,43 @@ const Backend = {
     const { data, error } = await sb.storage.from(BUCKET).download(blobPath(projectId));
     if(error) throw new Error(error.message);
     return await data.arrayBuffer();
+  },
+
+  /* ── scenes (per user, per project) ── */
+  async listScenes(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('scenes').select('*')
+      .eq('project_id', projectId).order('sort', { ascending:true }).order('created_at', { ascending:true });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createScene(projectId, name, actions){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('scenes')
+      .insert({ user_id:user.id, project_id:projectId, name, actions:actions||[] })
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async updateScene(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('scenes')
+      .update(Object.assign({}, fields, { updated_at:new Date().toISOString() }))
+      .eq('id', id).select();
+    if(error) throw new Error(error.message);
+    if(!data || !data.length) throw new Error('השמירה נכשלה.');
+    return data[0];
+  },
+  async deleteScene(id){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('scenes').delete().eq('id', id);
+    if(error) throw new Error(error.message);
   }
 };
 
 "use strict";
-const BUILD_ID = "1029-1050";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1101-0950";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2153,6 +2237,7 @@ const curScrollY = () => window.scrollY || document.documentElement.scrollTop ||
 function setScrollY(y){ window.scrollTo(0,y); try{ document.documentElement.scrollTop=y; document.body.scrollTop=y; }catch(e){} }
 function go(r){
   if(r.tab!=='setup') dbxAwaitingCode = false;
+  if(r.tab!=='scenes'){ _sceneEdit = null; _confirmDel = null; }   // leaving scenes drops any half-built draft
   const wasAreasList = route.tab==='areas' && route.area==null;
   if(wasAreasList) _areasScroll = curScrollY();                 // leaving the rooms list → remember where we were
   route = Object.assign({ area:null }, r);
@@ -2166,6 +2251,7 @@ function go(r){
 
 function render(){
   if(USER && (route.tab==='devices' || route.tab==='log')) route.tab = 'areas';   // those tabs don't exist for end-users
+  if(!USER && route.tab==='scenes') route.tab = 'areas';                          // scenes are an end-user feature
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab===route.tab ? 'page' : 'false'));
   $('#backBtn').hidden = route.area==null;
   const m = $('#main');
@@ -2173,7 +2259,7 @@ function render(){
   if(route.area!=null) return renderArea(m, P.areas[route.area]);
   $('#hTitle').textContent = P ? P.name : 'DyNet Remote';
   $('#hSub').textContent = (P ? `${Object.keys(P.areas).length} אזורים${USER?'':` · ${P.deviceOrder.length} בקרים`}` : 'לא נטען פרויקט') + (BUILD_ID && BUILD_ID[0] !== '/' ? ` · build ${BUILD_ID}` : '');
-  ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup })[route.tab](m);
+  ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup, scenes:renderScenes })[route.tab](m);
 }
 function pendingEditCount(){
   if(!P) return 0;
@@ -2372,13 +2458,195 @@ function renderUserAreas(m){
   const orphanHtml = orphan.length ? `<section class="floor"><div class="floor-title">מיזוג (לא שויך לחדר — בדוק שהשם תואם לשם חדר)</div>
     <div class="clim-col">${orphan.map(climateCard).join('')}</div></section>` : '';
   const toolbar = `<div class="rooms-toolbar"><button class="viewtoggle" id="viewToggle" aria-label="החלף תצוגה">${listView?GRID_SVG:LIST_SVG}</button></div>`;
-  m.innerHTML = `<div class="userareas">${toolbar}<div id="acActive"></div>${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
+  // Quick-run scene strip (the user's saved scenes), for one-tap activation from the rooms page.
+  const sceneStrip = _scenes.length ? `<section class="floor"><div class="floor-title">תרחישים</div>
+    <div class="scene-strip">${_scenes.map(s=>`<button class="scene-chip" data-runscene="${s.id}"><span class="sc-ic">${PLAY_SVG}</span>${esc(s.name)}</button>`).join('')}</div></section>` : '';
+  m.innerHTML = `<div class="userareas">${toolbar}${sceneStrip}<div id="acActive"></div>${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
   $('#viewToggle') && ($('#viewToggle').onclick = () => { cfg.roomView = listView?'grid':'list'; saveCfg(); renderUserAreas(m); });
+  m.querySelectorAll('[data-runscene]').forEach(b => b.onclick = () => { const s=_scenes.find(x=>x.id===b.dataset.runscene); if(s) runSceneUI(s, b); });
   // Live A/C indication at the top of the rooms list: which units are currently running.
   const anyAC = (USER && acIncluded()) ? CM.units().length : 0;
   if(anyAC && CM.enabled()){ renderAcActive(); cmRefresh(); _cmPoll=setInterval(cmRefresh,6000); }
 }
 /* Areas tab */
+/* ───────── Scenes (תרחישים) — end-user-built, stored per user in Supabase ─────────
+   A scene is a saved list of actions the app replays on tap:
+   lights on/off, covers open/close, A/C on/off. */
+const PLAY_SVG  = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6c0 .6.7 1 1.2.6l10-6.8a.8.8 0 0 0 0-1.3l-10-6.7A.8.8 0 0 0 8 5.2z"/></svg>';
+const EDIT_SVG  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+const TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg>';
+let _scenes = [];
+let _sceneEdit = null;     // null = list view · object = editing (new has no id)
+let _confirmDel = null;    // scene id pending delete confirmation
+// Load this user's scenes for the current project into the cache (used by the areas strip + scenes tab).
+async function loadScenes(){
+  if(!P || !P._server){ _scenes=[]; return; }
+  try{ _scenes = await Backend.listScenes(P._server.id); }catch(e){}
+}
+
+// Everything the user can put into a scene, grouped (used by the builder's pickers).
+function sceneTargets(){
+  const { lightFloors, roomSys, unmatched } = classifyUser();
+  const lights = [];
+  lightFloors.forEach(f => f.rooms.forEach(a => { if(a.channels && a.channels.length) lights.push({ id:a.id, name:areaName(a), channels:a.channels }); }));
+  const covers = [];
+  const pushCov = s => covers.push({ id:s.area.id, name:areaName(s.area) });
+  Object.values(roomSys||{}).forEach(arr => arr.forEach(pushCov));
+  (unmatched||[]).forEach(pushCov);
+  const acs = (acIncluded() ? CM.units() : []).map(u => ({ uid:CM.uid(u), name:u.name || CM.uid(u) }));
+  return { lights, covers, acs };
+}
+const COVER_ACT_HE = { open:'פתח', stop:'עצור', close:'סגור' };
+// Human description of a single scene action, for the action list.
+function actDescribe(ac){
+  if(ac.t==='light'){ const a=P.areas[ac.area]; const nm=a?areaName(a):'אזור '+ac.area;
+    const ch = (ac.ch && a) ? (a.channels.find(c=>c.id===ac.ch)) : null;
+    const chl = ac.ch ? (ch?chName(ch):'ערוץ '+ac.ch) : 'כל הערוצים';
+    return `${nm} · ${chl} → ${ac.pct}%`; }
+  if(ac.t==='cover'){ const a=P.areas[ac.area]; return `${a?areaName(a):'אזור '+ac.area} · ${COVER_ACT_HE[ac.act]||ac.act}`; }
+  if(ac.t==='ac'){ const u=CM.units().find(x=>CM.uid(x)===ac.uid); const nm=u?(u.name||ac.uid):ac.uid;
+    return ac.on ? `${nm} · ${ac.mode==='heat'?'חום':'קור'} ${ac.temp}°` : `${nm} · כבוי`; }
+  return '';
+}
+// Replay a scene's actions over the gateway / CoolMaster, with a small gap between each.
+async function runScene(s){
+  const fade = cfg.fade || 0;
+  for(const ac of (s.actions||[])){
+    try{
+      if(ac.t==='light')      await GW.level(ac.area, ac.ch||0, ac.pct, fade);
+      else if(ac.t==='cover') await GW.preset(ac.area, ac.act==='open' ? 1 : ac.act==='close' ? 2 : 4, 0);
+      else if(ac.t==='ac'){
+        await CM.setOn(ac.uid, !!ac.on);
+        if(ac.on){ if(ac.mode) await CM.setMode(ac.uid, ac.mode); if(ac.temp!=null) await CM.setTemp(ac.uid, ac.temp); }
+      }
+    }catch(e){}
+    await new Promise(r => setTimeout(r, 140));
+  }
+  cmRefresh();
+}
+async function runSceneUI(s, btn){
+  if(btn.classList.contains('running')) return;
+  btn.classList.add('running');
+  await runScene(s);
+  btn.classList.remove('running');
+  toast('„'+s.name+'” הופעל ✅', 3500);
+}
+function renderScenes(m){
+  if(!USER){ route.tab='areas'; return render(); }
+  if(!P || !P._server){ m.innerHTML = `<div class="scenes-wrap"><div class="empty">טען פרויקט קודם.</div></div>`; return; }
+  if(_sceneEdit) return renderSceneEditor(m);
+  m.innerHTML = `<div class="scenes-wrap">
+    <div class="scenes-head"><div><h2>התרחישים שלי</h2><div class="note">בנה תרחיש, ובלחיצה אחת הכל קורה.</div></div>
+      <button class="btn primary" id="scNew">+ חדש</button></div>
+    <div class="scene-list" id="sceneList"><div class="note">טוען…</div></div></div>`;
+  $('#scNew').onclick = () => { _sceneEdit = { name:'', actions:[] }; _actDraft=null; _confirmDel=null; render(); };
+  loadScenes().then(() => drawSceneList())
+    .catch(e => { const el=$('#sceneList'); if(el) el.innerHTML = `<div class="empty">טעינה נכשלה: ${esc(e.message)}</div>`; });
+}
+function drawSceneList(){
+  const box = $('#sceneList'); if(!box) return;
+  box.innerHTML = _scenes.map(sceneCard).join('') || `<div class="empty">אין עדיין תרחישים. צור אחד חדש עם הכפתור למעלה.</div>`;
+  box.querySelectorAll('[data-run]').forEach(b => b.onclick = () => { const s=_scenes.find(x=>x.id===b.dataset.run); if(s) runSceneUI(s, b); });
+  box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => { const s=_scenes.find(x=>x.id===b.dataset.edit); if(s){ _sceneEdit = JSON.parse(JSON.stringify(s)); _confirmDel=null; render(); } });
+  box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { _confirmDel = b.dataset.del; drawSceneList(); });
+  box.querySelectorAll('[data-delno]').forEach(b => b.onclick = () => { _confirmDel = null; drawSceneList(); });
+  box.querySelectorAll('[data-delyes]').forEach(b => b.onclick = async () => {
+    const id=b.dataset.delyes;
+    try{ await Backend.deleteScene(id); _scenes=_scenes.filter(x=>x.id!==id); _confirmDel=null; toast('התרחיש נמחק'); drawSceneList(); }
+    catch(e){ toast('מחיקה נכשלה: '+e.message, 5000); }
+  });
+}
+function sceneCard(s){
+  if(_confirmDel===s.id){
+    return `<div class="scene-card confirm"><span class="sc-nm">למחוק את „${esc(s.name)}”?</span>
+      <div class="scene-ops" style="flex-direction:row"><button class="btn scbtn" data-delno="${s.id}">ביטול</button><button class="btn scbtn danger" data-delyes="${s.id}">מחק</button></div></div>`;
+  }
+  const n=(s.actions||[]).length;
+  return `<div class="scene-card">
+    <button class="scene-run" data-run="${s.id}"><span class="sc-ic">${PLAY_SVG}</span>
+      <span class="sc-txt"><span class="sc-nm">${esc(s.name)}</span><span class="sc-meta">${n} פעולות</span></span></button>
+    <div class="scene-ops"><button class="iconbtn" data-edit="${s.id}" aria-label="ערוך">${EDIT_SVG}</button>
+      <button class="iconbtn" data-del="${s.id}" aria-label="מחק">${TRASH_SVG}</button></div></div>`;
+}
+// ── Scene builder: add fully-specified actions one at a time ──
+let _actDraft = null;   // the action currently being composed in the add-panel
+const freshDraft = t => ({ t, area:'', ch:0, pct:100, act:'open', uid:'', on:true, mode:'cool', temp:24 });
+function captureDraft(){
+  const d=_actDraft; if(!d) return; const q=id=>document.getElementById(id);
+  if(d.t==='light'){ if(q('adArea')) d.area=q('adArea').value; if(q('adCh')) d.ch=+q('adCh').value; if(q('adPct')) d.pct=+q('adPct').value; }
+  else if(d.t==='cover'){ if(q('adArea')) d.area=q('adArea').value; }
+  else if(d.t==='ac'){ if(q('adUnit')) d.uid=q('adUnit').value; if(q('adTemp')) d.temp=+q('adTemp').value; }
+}
+function buildAction(d, T){
+  if(d.t==='light'){ const a=T.lights.find(l=>String(l.id)===String(d.area))||T.lights[0]; if(!a) return null; return { t:'light', area:a.id, ch:+d.ch||0, pct:+d.pct }; }
+  if(d.t==='cover'){ const c=T.covers.find(x=>String(x.id)===String(d.area))||T.covers[0]; if(!c) return null; return { t:'cover', area:c.id, act:d.act||'open' }; }
+  const u=T.acs.find(x=>x.uid===d.uid)||T.acs[0]; if(!u) return null;
+  return d.on ? { t:'ac', uid:u.uid, on:true, mode:d.mode||'cool', temp:+d.temp } : { t:'ac', uid:u.uid, on:false };
+}
+function renderSceneEditor(m){
+  const ed=_sceneEdit, d=_actDraft || (_actDraft=freshDraft('light'));
+  const T = sceneTargets(), { lights, covers, acs } = T;
+  const listHtml = (ed.actions||[]).length
+    ? ed.actions.map((a,i)=>`<div class="act-row"><span class="act-tx">${esc(actDescribe(a))}</span><button class="iconbtn" data-actdel="${i}" aria-label="הסר">${TRASH_SVG}</button></div>`).join('')
+    : `<div class="note">עדיין אין פעולות — הוסף למטה.</div>`;
+  let fields='';
+  if(d.t==='light'){
+    const area = lights.find(l=>String(l.id)===String(d.area)) || lights[0];
+    fields = lights.length ? `
+      <div class="field"><label>אזור</label><select id="adArea">${lights.map(l=>`<option value="${l.id}" ${area&&l.id===area.id?'selected':''}>${esc(l.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>ערוץ</label><select id="adCh"><option value="0" ${!d.ch?'selected':''}>כל הערוצים</option>${area?area.channels.map(c=>`<option value="${c.id}" ${d.ch===c.id?'selected':''}>${esc(chName(c))}</option>`).join(''):''}</select></div>
+      <div class="field"><label>עוצמה: <b id="adPctV">${d.pct}%</b></label><input type="range" id="adPct" min="0" max="100" step="5" value="${d.pct}"></div>` : `<div class="note">אין אזורי תאורה.</div>`;
+  } else if(d.t==='cover'){
+    const c0 = covers.find(c=>String(c.id)===String(d.area)) || covers[0];
+    fields = covers.length ? `
+      <div class="field"><label>וילון / צלון</label><select id="adArea">${covers.map(c=>`<option value="${c.id}" ${c0&&c.id===c0.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>פעולה</label><div class="seg actSeg" id="adActSeg">${['open','stop','close'].map(a=>`<button data-act="${a}" aria-pressed="${d.act===a}">${COVER_ACT_HE[a]}</button>`).join('')}</div></div>` : `<div class="note">אין וילונות/צלונים.</div>`;
+  } else {
+    const u0 = acs.find(u=>u.uid===d.uid) || acs[0];
+    fields = acs.length ? `
+      <div class="field"><label>מזגן</label><select id="adUnit">${acs.map(u=>`<option value="${esc(u.uid)}" ${u0&&u.uid===u0.uid?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>מצב</label><div class="seg actSeg" id="adPwSeg"><button data-on="1" aria-pressed="${d.on}">הדלק</button><button data-on="0" aria-pressed="${!d.on}">כבה</button></div></div>
+      ${d.on?`<div class="field"><label>קירור / חימום</label><div class="seg actSeg" id="adModeSeg"><button data-md="cool" aria-pressed="${d.mode==='cool'}">קור</button><button data-md="heat" aria-pressed="${d.mode==='heat'}">חום</button></div></div>
+      <div class="field"><label>טמפרטורה</label><div class="tempstep"><button id="adTempDn" type="button">−</button><b id="adTempV">${d.temp}°</b><button id="adTempUp" type="button">+</button><input type="hidden" id="adTemp" value="${d.temp}"></div></div>`:''}` : `<div class="note">אין מזגנים.</div>`;
+  }
+  const typeBtn=(t,l)=>`<button data-type="${t}" aria-pressed="${d.t===t}">${l}</button>`;
+  m.innerHTML = `<div class="scenes-wrap scene-edit">
+    <div class="field"><label>שם התרחיש</label><input id="scName" value="${esc(ed.name||'')}" placeholder="למשל: ערב · יציאה מהבית · שינה" autocomplete="off"></div>
+    <section class="sc-sec"><h3>פעולות בתרחיש</h3><div id="actList">${listHtml}</div></section>
+    <section class="sc-sec addsec"><h3>הוספת פעולה</h3>
+      <div class="seg typeSeg" id="adTypeSeg">${typeBtn('light','תאורה')}${typeBtn('cover','וילון/צלון')}${typeBtn('ac','מזגן')}</div>
+      <div class="add-fields">${fields}</div>
+      <button class="btn primary" id="adAdd" style="width:100%;margin-top:6px">+ הוסף לתרחיש</button></section>
+    <div class="sc-actions"><button class="btn" id="scCancel">ביטול</button><button class="btn primary" id="scSave">שמור תרחיש</button></div>
+  </div>`;
+  bindSceneEditor(m, T);
+}
+function bindSceneEditor(m, T){
+  const ed=_sceneEdit, d=_actDraft;
+  const keepName=()=>{ const n=$('#scName'); if(n) ed.name=n.value; };
+  m.querySelectorAll('#adTypeSeg button').forEach(b=>b.onclick=()=>{ keepName(); _actDraft=freshDraft(b.dataset.type); renderSceneEditor(m); });
+  const areaSel=$('#adArea'); if(areaSel && d.t==='light') areaSel.onchange=()=>{ keepName(); captureDraft(); d.ch=0; renderSceneEditor(m); };
+  const pct=$('#adPct'); if(pct) pct.oninput=()=>{ const v=$('#adPctV'); if(v) v.textContent=pct.value+'%'; };
+  m.querySelectorAll('#adActSeg button').forEach(b=>b.onclick=()=>{ d.act=b.dataset.act; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
+  m.querySelectorAll('#adPwSeg button').forEach(b=>b.onclick=()=>{ keepName(); captureDraft(); d.on=b.dataset.on==='1'; renderSceneEditor(m); });
+  m.querySelectorAll('#adModeSeg button').forEach(b=>b.onclick=()=>{ d.mode=b.dataset.md; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
+  const bump=delta=>{ const h=$('#adTemp'); let t=Math.max(TEMP_MIN,Math.min(TEMP_MAX,(+h.value||24)+delta)); h.value=t; d.temp=t; const lab=$('#adTempV'); if(lab) lab.textContent=t+'°'; };
+  $('#adTempUp') && ($('#adTempUp').onclick=()=>bump(1));
+  $('#adTempDn') && ($('#adTempDn').onclick=()=>bump(-1));
+  $('#adAdd').onclick=()=>{ keepName(); captureDraft(); const a=buildAction(_actDraft,T); if(!a){ toast('אין יעד לבחור לפעולה הזו'); return; } ed.actions=ed.actions||[]; ed.actions.push(a); renderSceneEditor(m); };
+  m.querySelectorAll('[data-actdel]').forEach(b=>b.onclick=()=>{ keepName(); ed.actions.splice(+b.dataset.actdel,1); renderSceneEditor(m); });
+  $('#scCancel').onclick=()=>{ _sceneEdit=null; _actDraft=null; render(); };
+  $('#scSave').onclick=async(ev)=>{
+    const name=($('#scName').value||'').trim(); if(!name){ toast('תן שם לתרחיש'); return; }
+    if(!(ed.actions||[]).length){ toast('הוסף לפחות פעולה אחת'); return; }
+    const btn=ev.currentTarget; if(btn.disabled) return; btn.disabled=true; btn.textContent='שומר…';
+    try{
+      if(ed.id) await Backend.updateScene(ed.id,{ name, actions:ed.actions });
+      else      await Backend.createScene(P._server.id, name, ed.actions);
+      _sceneEdit=null; _actDraft=null; toast('התרחיש נשמר ✅'); await loadScenes(); render();
+    }catch(e){ toast('שמירה נכשלה: '+e.message,5000); btn.disabled=false; btn.textContent='שמור תרחיש'; }
+  };
+}
 function renderAreas(m){
   if(USER) return renderUserAreas(m);
   const q = route.q || '';
@@ -3478,6 +3746,23 @@ async function dbxApi(ep, args){
   if(!r.ok) throw new Error('Dropbox '+r.status+': '+(await r.text()).slice(0,120)); return r.json();
 }
 const dbxArg = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+// Resolve the "dynalite" folder so searches look only inside it, not the whole Dropbox.
+// Cached per session; returns its path_lower (e.g. "/dynalite"), or '' if no such folder exists.
+let _dbxRoot;
+async function dbxDynaliteRoot(){
+  if(_dbxRoot !== undefined) return _dbxRoot;
+  try{
+    const top = await dbxApi('files/list_folder', { path:'', limit:500 });
+    let hit = (top.entries||[]).find(e => e['.tag']==='folder' && /^dynalite$/i.test(e.name||''));
+    if(!hit){   // not at the root — look anywhere in the account
+      const sr = await dbxApi('files/search_v2', { query:'dynalite', options:{ max_results:100, file_status:'active', filename_only:true } });
+      hit = (sr.matches||[]).map(m => m.metadata && m.metadata.metadata)
+        .find(md => md && md['.tag']==='folder' && /^dynalite$/i.test(md.name||''));
+    }
+    _dbxRoot = hit ? (hit.path_lower || '') : '';
+  }catch(e){ _dbxRoot = ''; }
+  return _dbxRoot;
+}
 // Sort key for a Dropbox file: the date written in its name (DD-MM-YY / DD-MM-YYYY, any of - . / _ or
 // space as separator), as a timestamp. Falls back to the file's modified time when the name has no date.
 function fileDateKey(e){
@@ -3527,7 +3812,7 @@ async function dbxBrowse(path){
     });
     const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
     pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="dbxq" type="search" placeholder="חיפוש קובץ DLJ בכל Dropbox" autocomplete="off"></div>
+      <input id="dbxq" type="search" placeholder="חיפוש בתוך תיקיית dynalite" autocomplete="off"></div>
       <div class="note mono" style="direction:ltr;text-align:left">${esc(path||'/')}</div>
       <div class="dbx-list">
       ${up!==null ? `<button data-dir="${esc(up)}">↩ תיקייה למעלה</button>` : ''}
@@ -3540,12 +3825,16 @@ async function dbxBrowse(path){
 async function dbxSearch(q, backTo){
   const pane = $('#dbxPane'); if(!pane) return;
   try{
-    const res = await dbxApi('files/search_v2', { query:q, options:{ max_results:100, file_status:'active', filename_only:true } });
+    const root = await dbxDynaliteRoot();
+    const opts = { max_results:100, file_status:'active', filename_only:true };
+    if(root) opts.path = root;                 // search only inside the "dynalite" folder
+    const res = await dbxApi('files/search_v2', { query:q, options:opts });
     const seen = {};
     const folders = (res.matches||[]).map(m => m.metadata && m.metadata.metadata)
-      .filter(md => md && md['.tag']==='folder' && md.path_lower && !seen[md.path_lower] && (seen[md.path_lower]=1));
+      .filter(md => md && md['.tag']==='folder' && md.path_lower && !seen[md.path_lower] && (seen[md.path_lower]=1))
+      .filter(md => !root || md.path_lower.startsWith(root + '/') || md.path_lower === root);
     pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="dbxq" type="search" placeholder="חיפוש תיקייה בכל Dropbox" value="${esc(q)}" autocomplete="off"></div>
+      <input id="dbxq" type="search" placeholder="חיפוש תיקייה בתוך dynalite" value="${esc(q)}" autocomplete="off"></div>
       <div class="dbx-list">
       <button data-back="${esc(backTo)}">↩ חזרה לעיון בתיקיות</button>
       ${folders.map(md => `<button data-dir="${esc(md.path_lower)}">📁 ${esc(md.name)}<br><span class="note mono" style="direction:ltr;font-size:11px">${esc(md.path_display||'')}</span></button>`).join('') || '<div class="empty">לא נמצאו תיקיות.</div>'}</div>`;
@@ -3707,7 +3996,16 @@ async function dbxSaveAs(name){
 }
 
 /* ───────── boot ───────── */
-if(USER){ document.body.classList.add('role-user'); document.querySelectorAll('nav.tabs button[data-tab="devices"], nav.tabs button[data-tab="log"]').forEach(b => b.remove()); const g=document.querySelector('nav.tabs .in'); if(g) g.style.gridTemplateColumns='repeat(2,1fr)'; }
+if(USER){ document.body.classList.add('role-user'); document.querySelectorAll('nav.tabs button[data-tab="devices"], nav.tabs button[data-tab="log"]').forEach(b => b.remove());
+  const g=document.querySelector('nav.tabs .in');
+  if(g && !g.querySelector('[data-tab="scenes"]')){   // add a Scenes tab between Areas and Settings
+    const setupBtn=g.querySelector('[data-tab="setup"]');
+    const sc=document.createElement('button'); sc.dataset.tab='scenes';
+    sc.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L12 18l-4.2 2.2.8-4.7L5.2 8l4.7-.7z"/></svg>תרחישים';
+    g.insertBefore(sc, setupBtn);
+    g.style.gridTemplateColumns='repeat(3,1fr)';
+  } else if(g){ g.style.gridTemplateColumns='repeat(2,1fr)'; }
+}
 document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab==='areas' ? { tab:'areas', area:lastArea } : { tab:b.dataset.tab })));
 $('#backBtn').addEventListener('click', () => { lastArea = null; go({ tab:'areas', area:null }); });   // back = out to the room list
 $('#linkChip').addEventListener('click', () => go({ tab:'setup' }));
@@ -3796,6 +4094,7 @@ async function userOpenProject(proj){
     P._server = { id:proj.id, version:proj.version||1 };
     render(); connect(); startNetCheck();
     startUserSync(proj.id);
+    loadScenes().then(() => { if(route.tab==='areas' && route.area==null) render(); });   // fill the quick-run strip
   }catch(e){ userError('טעינת הפרויקט נכשלה: '+e.message); }
 }
 // Apply the technician-set connection (from the project config) to the user app's settings.
