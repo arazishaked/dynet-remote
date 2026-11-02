@@ -1524,7 +1524,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1102-1215";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1102-1232";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2345,7 +2345,7 @@ const SYS_TYPES = {
   curtain:{w:['וילון','curtain'],he:'וילונות'}, shade:{w:['צלון','shade'],he:'צלונים'},
   awning:{w:['סוכך','awning'],he:'סוככים'},     blind:{w:['תריס','שאטר','blind','shutter'],he:'תריסים'},
   heating:{w:['חימום','heating'],he:'חימום רצפה'}, pergola:{w:['פרגולה','pergola'],he:'פרגולה'},
-  screen:{w:['רשת','screen'],he:'רשתות'},       window:{w:['חלונות חשמלי','חלון חשמלי'],he:'חלונות חשמליים'},
+  screen:{w:['רשת','screen'],he:'רשתות'},       window:{w:['חלון','חלונות חשמלי','חלון חשמלי','window'],he:'חלונות חשמליים'},
   gate:{w:['שער','gate'],he:'שערים'},           roller:{w:['גליל','roller'],he:'גלילה'}
 };
 const AC_WORDS = ['מיזוג','מזגן','מזוג','hvac','climate'];
@@ -2359,6 +2359,9 @@ function classifyUser(){
   const ov = (P && P.tech && P.tech.sysRoom) || {};   // technician's manual overrides: areaId → roomId | 'own' | 'hide'
   const lightFloors = [], systems = [];
   const addRoom = (a, fn) => { let fl=lightFloors.find(x=>x.floor===fn); if(!fl){ fl={floor:fn,rooms:[]}; lightFloors.push(fl); } fl.rooms.push(a); };
+  // Folder (floor) each area sits in — so a light manually pinned to a room can be grouped under that room's folder.
+  const floorByArea = {};
+  (function scan(node, floor){ (node.children||[]).forEach(c=>{ if(c.type==='folder') scan(c, floor||c.name); else if(c.type==='area') floorByArea[c.id]=floor||'כללי'; }); })(P.tree,'');
   (function walk(node, floor, sysCtx){
     (node.children||[]).forEach(c=>{
       if(c.type==='folder'){
@@ -2371,7 +2374,12 @@ function classifyUser(){
         // Manual override wins over everything (including A/C exclusion and the generic filter).
         if(o==='hide') return;
         if(o==='own'){ addRoom(a, fn); return; }
-        if(o!=null && /^\d+$/.test(String(o))){ systems.push({ area:a, type:(t&&t!=='ac')?t:'shade', forceRoom:+o }); return; }
+        if(o!=null && /^\d+$/.test(String(o))){
+          // Pinned to a room: a cover/system shows as that room's cover; a light shows as a tile under that room's folder.
+          if(t && t!=='ac') systems.push({ area:a, type:t, forceRoom:+o });
+          else addRoom(a, floorByArea[+o] || fn);
+          return;
+        }
         // no override → default behavior
         if(t==='ac') return;                     // A/C no longer comes from DyNet — it's CoolMaster-direct now
         if(t){ systems.push({ area:a, type:t }); }

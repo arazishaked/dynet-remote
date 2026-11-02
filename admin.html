@@ -1208,6 +1208,24 @@ function adminSystems(P){
   })(P.tree,'',false);
   return sys;
 }
+// Every area in the project, grouped by its folder in the .dlj tree, EXCLUDING A/C (CoolMaster) areas.
+// Lets the technician re-assign anything in the house — a light to another room, an area to stand alone, etc.
+function adminAssignGroups(P){
+  const order=[], byFolder={};
+  (function walk(node, folder, acCtx){
+    (node.children||[]).forEach(c=>{
+      if(c.type==='folder') walk(c, folder||c.name, acCtx || isAC(c.name));
+      else if(c.type==='area'){
+        const a=P.areas[c.id]; if(!a) return;
+        if(acCtx || isAC(a.name||'')) return;         // user asked: never show מיזוג in this list
+        const fn=folder||'כללי';
+        if(!byFolder[fn]){ byFolder[fn]=[]; order.push(fn); }
+        byFolder[fn].push({ id:a.id, name:a.name||('אזור '+a.id), folder:fn });
+      }
+    });
+  })(P.tree,'',false);
+  return order.map(f=>({ folder:f, items:byFolder[f] }));
+}
 function roomOptionsPlain(selected){
   if(!state.parsed) return '';
   let html='';
@@ -1469,42 +1487,52 @@ function renderDetail(){
   const sc=el('div','card');
   if(!state.parsed){ sc.innerHTML=`<h2>שיוך אזורים ומערכות</h2>`; sc.appendChild(el('div','note','העלה קובץ ‎.dlj‎ כדי לשייך.')); }
   else {
-    const sys=adminSystems(state.parsed);
-    sc.innerHTML=`<details class="collapse"><summary class="csum"><span class="ctitle">שיוך אזורים ומערכות</span><span class="cmeta">${sys.length} פריטים · לחץ לפתיחה</span></summary><div id="sysbody"></div></details>`;
+    const groups=adminAssignGroups(state.parsed);
+    const total=groups.reduce((n,g)=>n+g.items.length,0);
+    sc.innerHTML=`<details class="collapse"><summary class="csum"><span class="ctitle">שיוך אזורים ומערכות</span><span class="cmeta">${total} פריטים · לחץ לפתיחה</span></summary><div id="sysbody"></div></details>`;
     const body=sc.querySelector('#sysbody');
-    body.appendChild(el('div','note','וילונות · צלונים · חלונות · פרגולות וכו׳. לכל פריט: לאיזה חדר לשייך אותו, „אזור עצמאי” כדי שיופיע כחדר נפרד, או „הסתר”. „אוטומטי” = המערכת מחליטה לפי השם. כאן מתקנים כל מה שנכנס לחדר הלא נכון או שלא הופיע.'));
-    if(!sys.length) body.appendChild(el('div','note','לא זוהו מערכות (וילונות/צלונים/חלונות) בקובץ.'));
+    body.appendChild(el('div','note','כל האזורים בבית, מסודרים לפי התיקיות בקובץ (ללא מיזוג). לכל פריט: „אוטומטי” = המערכת מחליטה לפי השם; חדר מסוים = משייך את הפריט לאותו חדר; „אזור עצמאי” = יופיע כחדר נפרד; „הסתר” = לא יופיע למשתמש.'));
+    if(!total) body.appendChild(el('div','note','לא נמצאו אזורים (מלבד מיזוג) בקובץ.'));
     else {
-      const search=el('input'); search.type='search'; search.placeholder='חיפוש לפי שם או קומה…';
+      const search=el('input'); search.type='search'; search.placeholder='חיפוש לפי שם או תיקייה…';
       search.setAttribute('dir','rtl');
       search.style.cssText='width:100%;margin-top:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font-size:14px';
       body.appendChild(search);
       const noRes=el('div','note','אין תוצאות לחיפוש.'); noRes.style.display='none';
-      const box=el('div','list'); box.style.marginTop='10px';
-      sys.forEach(s=>{
-        const cur=(cfg.sysRoom||{})[s.id]; const selVal=cur==null?'':String(cur);
-        const row=el('div','item');
-        row.dataset.search=((s.name||'')+' '+(s.floor||'')).toLowerCase();
-        row.innerHTML=`<div class="nm"><b>${esc(s.name)}</b><small>${esc(s.floor)}</small></div>
-          <select data-sys="${s.id}" style="flex:1;max-width:210px">
-            <option value="" ${selVal===''?'selected':''}>אוטומטי</option>
-            <option value="own" ${selVal==='own'?'selected':''}>אזור עצמאי</option>
-            <option value="hide" ${selVal==='hide'?'selected':''}>הסתר</option>
-            ${roomOptionsPlain(cur)}
-          </select>`;
-        box.appendChild(row);
+      const wrap=el('div'); wrap.style.marginTop='6px';
+      groups.forEach(g=>{
+        const grp=el('div','asg-group');
+        const h=el('div'); h.textContent=`${g.folder} · ${g.items.length}`;
+        h.style.cssText='font-weight:650;font-size:13px;color:var(--muted);margin:16px 2px 7px';
+        grp.appendChild(h);
+        const box=el('div','list');
+        g.items.forEach(s=>{
+          const cur=(cfg.sysRoom||{})[s.id]; const selVal=cur==null?'':String(cur);
+          const row=el('div','item');
+          row.dataset.search=((s.name||'')+' '+g.folder).toLowerCase();
+          row.innerHTML=`<div class="nm"><b>${esc(s.name)}</b><small>${esc(g.folder)}</small></div>
+            <select data-sys="${s.id}" style="flex:1;max-width:210px">
+              <option value="" ${selVal===''?'selected':''}>אוטומטי</option>
+              <option value="own" ${selVal==='own'?'selected':''}>אזור עצמאי</option>
+              <option value="hide" ${selVal==='hide'?'selected':''}>הסתר</option>
+              ${roomOptionsPlain(cur)}
+            </select>`;
+          box.appendChild(row);
+        });
+        grp.appendChild(box); wrap.appendChild(grp);
       });
-      body.appendChild(box);
+      body.appendChild(wrap);
       body.appendChild(noRes);
       search.oninput=()=>{
         const q=search.value.trim().toLowerCase(); let shown=0;
-        box.querySelectorAll('.item').forEach(r=>{
-          const hit=!q || r.dataset.search.indexOf(q)>-1;
-          r.style.display=hit?'':'none'; if(hit) shown++;
+        wrap.querySelectorAll('.asg-group').forEach(grp=>{
+          let gs=0;
+          grp.querySelectorAll('.item').forEach(r=>{ const hit=!q || r.dataset.search.indexOf(q)>-1; r.style.display=hit?'':'none'; if(hit){gs++;shown++;} });
+          grp.style.display=gs?'':'none';
         });
         noRes.style.display=shown?'none':'';
       };
-      box.querySelectorAll('select[data-sys]').forEach(sel=>sel.onchange=async()=>{
+      wrap.querySelectorAll('select[data-sys]').forEach(sel=>sel.onchange=async()=>{
         const id=sel.dataset.sys, v=sel.value;
         const srNow=Object.assign({}, cfgOf(state.sel).sysRoom||{});
         if(v==='') delete srNow[id]; else srNow[id]=/^\d+$/.test(v)?+v:v;
