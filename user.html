@@ -425,6 +425,16 @@ details.dev>summary::-webkit-details-marker{display:none}
 .scene-chip.running{opacity:.6}
 .scene-chip .sc-ic{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
 .scene-chip .sc-ic svg{width:12px;height:12px;margin-inline-start:1px}
+/* ── automations ── */
+.seg.scseg{margin-bottom:4px}.seg.scseg button{flex:1}
+.auto-run .sc-ic{background:var(--card);border:1px solid var(--accent);color:var(--accent)}
+.auto-run.off{opacity:.6}.auto-run.off .sc-ic{border-color:var(--line);color:var(--muted)}
+.auto-gate{border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));background:color-mix(in srgb,var(--accent) 9%,var(--card));border-radius:12px;padding:10px 12px}
+.daychips{display:flex;gap:6px;flex-wrap:wrap}
+.daychip{width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);font-weight:650;font-size:14px}
+.daychip[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.chkrow{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:550;padding:4px 0}
+.chkrow input{width:18px;height:18px;accent-color:var(--accent)}
 /* hero: ring centered in the middle column, climate card to one side */
 .ahero.has-climate{display:grid;grid-template-columns:minmax(118px,1fr) auto minmax(118px,1fr);gap:12px;align-items:center;flex-direction:row}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
@@ -1462,11 +1472,43 @@ const Backend = {
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const { error } = await sb.from('scenes').delete().eq('id', id);
     if(error) throw new Error(error.message);
+  },
+
+  /* ── automations (per user, per project) ── */
+  async listAutomations(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('automations').select('*')
+      .eq('project_id', projectId).order('time', { ascending:true });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createAutomation(projectId, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('automations')
+      .insert(Object.assign({ user_id:user.id, project_id:projectId }, fields))
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async updateAutomation(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('automations')
+      .update(Object.assign({}, fields, { updated_at:new Date().toISOString() }))
+      .eq('id', id).select();
+    if(error) throw new Error(error.message);
+    if(!data || !data.length) throw new Error('השמירה נכשלה.');
+    return data[0];
+  },
+  async deleteAutomation(id){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('automations').delete().eq('id', id);
+    if(error) throw new Error(error.message);
   }
 };
 
 "use strict";
-const BUILD_ID = "1101-0950";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1102-0556";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2237,7 +2279,7 @@ const curScrollY = () => window.scrollY || document.documentElement.scrollTop ||
 function setScrollY(y){ window.scrollTo(0,y); try{ document.documentElement.scrollTop=y; document.body.scrollTop=y; }catch(e){} }
 function go(r){
   if(r.tab!=='setup') dbxAwaitingCode = false;
-  if(r.tab!=='scenes'){ _sceneEdit = null; _confirmDel = null; }   // leaving scenes drops any half-built draft
+  if(r.tab!=='scenes'){ _sceneEdit = null; _confirmDel = null; _autoEdit = null; _confirmDelA = null; }   // leaving scenes drops any half-built draft
   const wasAreasList = route.tab==='areas' && route.area==null;
   if(wasAreasList) _areasScroll = curScrollY();                 // leaving the rooms list → remember where we were
   route = Object.assign({ area:null }, r);
@@ -2503,19 +2545,28 @@ function actDescribe(ac){
     const ch = (ac.ch && a) ? (a.channels.find(c=>c.id===ac.ch)) : null;
     const chl = ac.ch ? (ch?chName(ch):'ערוץ '+ac.ch) : 'כל הערוצים';
     return `${nm} · ${chl} → ${ac.pct}%`; }
-  if(ac.t==='cover'){ const a=P.areas[ac.area]; return `${a?areaName(a):'אזור '+ac.area} · ${COVER_ACT_HE[ac.act]||ac.act}`; }
+  if(ac.t==='cover'){ const a=P.areas[ac.area]; let s=`${a?areaName(a):'אזור '+ac.area} · ${COVER_ACT_HE[ac.act]||ac.act}`; if(ac.stopAfter>0) s+=` · עצור אחרי ${ac.stopAfter}ש׳`; return s; }
   if(ac.t==='ac'){ const u=CM.units().find(x=>CM.uid(x)===ac.uid); const nm=u?(u.name||ac.uid):ac.uid;
     return ac.on ? `${nm} · ${ac.mode==='heat'?'חום':'קור'} ${ac.temp}°` : `${nm} · כבוי`; }
   return '';
 }
+// Fade for a light channel in a scene: dimmers fade over 2s, on/off (switch) channels snap (0s).
+function chFadeFor(area, chId){ const a=P.areas[area]; const c=a&&a.channels.find(x=>x.id===chId); return (c&&isSwitch(c))?0:2; }
 // Replay a scene's actions over the gateway / CoolMaster, with a small gap between each.
 async function runScene(s){
-  const fade = cfg.fade || 0;
   for(const ac of (s.actions||[])){
     try{
-      if(ac.t==='light')      await GW.level(ac.area, ac.ch||0, ac.pct, fade);
-      else if(ac.t==='cover') await GW.preset(ac.area, ac.act==='open' ? 1 : ac.act==='close' ? 2 : 4, 0);
-      else if(ac.t==='ac'){
+      if(ac.t==='light'){
+        const a=P.areas[ac.area];
+        const chans = ac.ch ? [ac.ch] : ((a&&a.channels.map(c=>c.id))||[0]);
+        for(const ch of chans){ await GW.level(ac.area, ch, ac.pct, chFadeFor(ac.area, ch)); await new Promise(r=>setTimeout(r,70)); }
+      } else if(ac.t==='cover'){
+        await GW.preset(ac.area, ac.act==='open' ? 1 : ac.act==='close' ? 2 : 4, 0);
+        // optional delay → stop the cover partway (open/close only)
+        if((ac.act==='open'||ac.act==='close') && ac.stopAfter>0){
+          setTimeout(()=>{ act(GW.preset(ac.area, 4, 0)); }, ac.stopAfter*1000);
+        }
+      } else if(ac.t==='ac'){
         await CM.setOn(ac.uid, !!ac.on);
         if(ac.on){ if(ac.mode) await CM.setMode(ac.uid, ac.mode); if(ac.temp!=null) await CM.setTemp(ac.uid, ac.temp); }
       }
@@ -2531,14 +2582,21 @@ async function runSceneUI(s, btn){
   btn.classList.remove('running');
   toast('„'+s.name+'” הופעל ✅', 3500);
 }
+function scSeg(){
+  return `<div class="seg scseg" id="scSeg"><button data-t="scenes" aria-pressed="${_scTab!=='autos'}">תרחישים</button><button data-t="autos" aria-pressed="${_scTab==='autos'}">אוטומציות</button></div>`;
+}
+function bindScSeg(m){ m.querySelectorAll('#scSeg button').forEach(b=>b.onclick=()=>{ _scTab=b.dataset.t; render(); }); }
 function renderScenes(m){
   if(!USER){ route.tab='areas'; return render(); }
   if(!P || !P._server){ m.innerHTML = `<div class="scenes-wrap"><div class="empty">טען פרויקט קודם.</div></div>`; return; }
   if(_sceneEdit) return renderSceneEditor(m);
-  m.innerHTML = `<div class="scenes-wrap">
+  if(_autoEdit) return renderAutoEditor(m);
+  if(_scTab==='autos'){ m.innerHTML = `<div class="scenes-wrap">${scSeg()}<div id="autoBody"></div></div>`; bindScSeg(m); return renderAutos(m); }
+  m.innerHTML = `<div class="scenes-wrap">${scSeg()}
     <div class="scenes-head"><div><h2>התרחישים שלי</h2><div class="note">בנה תרחיש, ובלחיצה אחת הכל קורה.</div></div>
       <button class="btn primary" id="scNew">+ חדש</button></div>
     <div class="scene-list" id="sceneList"><div class="note">טוען…</div></div></div>`;
+  bindScSeg(m);
   $('#scNew').onclick = () => { _sceneEdit = { name:'', actions:[] }; _actDraft=null; _confirmDel=null; render(); };
   loadScenes().then(() => drawSceneList())
     .catch(e => { const el=$('#sceneList'); if(el) el.innerHTML = `<div class="empty">טעינה נכשלה: ${esc(e.message)}</div>`; });
@@ -2570,16 +2628,16 @@ function sceneCard(s){
 }
 // ── Scene builder: add fully-specified actions one at a time ──
 let _actDraft = null;   // the action currently being composed in the add-panel
-const freshDraft = t => ({ t, area:'', ch:0, pct:100, act:'open', uid:'', on:true, mode:'cool', temp:24 });
+const freshDraft = t => ({ t, area:'', ch:0, pct:100, act:'open', stopAfter:0, uid:'', on:true, mode:'cool', temp:24 });
 function captureDraft(){
   const d=_actDraft; if(!d) return; const q=id=>document.getElementById(id);
   if(d.t==='light'){ if(q('adArea')) d.area=q('adArea').value; if(q('adCh')) d.ch=+q('adCh').value; if(q('adPct')) d.pct=+q('adPct').value; }
-  else if(d.t==='cover'){ if(q('adArea')) d.area=q('adArea').value; }
+  else if(d.t==='cover'){ if(q('adArea')) d.area=q('adArea').value; if(q('adStop')) d.stopAfter=+q('adStop').value||0; }
   else if(d.t==='ac'){ if(q('adUnit')) d.uid=q('adUnit').value; if(q('adTemp')) d.temp=+q('adTemp').value; }
 }
 function buildAction(d, T){
   if(d.t==='light'){ const a=T.lights.find(l=>String(l.id)===String(d.area))||T.lights[0]; if(!a) return null; return { t:'light', area:a.id, ch:+d.ch||0, pct:+d.pct }; }
-  if(d.t==='cover'){ const c=T.covers.find(x=>String(x.id)===String(d.area))||T.covers[0]; if(!c) return null; return { t:'cover', area:c.id, act:d.act||'open' }; }
+  if(d.t==='cover'){ const c=T.covers.find(x=>String(x.id)===String(d.area))||T.covers[0]; if(!c) return null; const a={ t:'cover', area:c.id, act:d.act||'open' }; if((a.act==='open'||a.act==='close') && +d.stopAfter>0) a.stopAfter=+d.stopAfter; return a; }
   const u=T.acs.find(x=>x.uid===d.uid)||T.acs[0]; if(!u) return null;
   return d.on ? { t:'ac', uid:u.uid, on:true, mode:d.mode||'cool', temp:+d.temp } : { t:'ac', uid:u.uid, on:false };
 }
@@ -2600,7 +2658,8 @@ function renderSceneEditor(m){
     const c0 = covers.find(c=>String(c.id)===String(d.area)) || covers[0];
     fields = covers.length ? `
       <div class="field"><label>וילון / צלון</label><select id="adArea">${covers.map(c=>`<option value="${c.id}" ${c0&&c.id===c0.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
-      <div class="field"><label>פעולה</label><div class="seg actSeg" id="adActSeg">${['open','stop','close'].map(a=>`<button data-act="${a}" aria-pressed="${d.act===a}">${COVER_ACT_HE[a]}</button>`).join('')}</div></div>` : `<div class="note">אין וילונות/צלונים.</div>`;
+      <div class="field"><label>פעולה</label><div class="seg actSeg" id="adActSeg">${['open','stop','close'].map(a=>`<button data-act="${a}" aria-pressed="${d.act===a}">${COVER_ACT_HE[a]}</button>`).join('')}</div></div>
+      ${(d.act==='open'||d.act==='close') ? `<div class="field"><label>השהייה ואז עצירה (שניות · 0 = ללא)</label><input type="number" id="adStop" min="0" max="600" value="${d.stopAfter||0}"></div>` : ''}` : `<div class="note">אין וילונות/צלונים.</div>`;
   } else {
     const u0 = acs.find(u=>u.uid===d.uid) || acs[0];
     fields = acs.length ? `
@@ -2627,7 +2686,7 @@ function bindSceneEditor(m, T){
   m.querySelectorAll('#adTypeSeg button').forEach(b=>b.onclick=()=>{ keepName(); _actDraft=freshDraft(b.dataset.type); renderSceneEditor(m); });
   const areaSel=$('#adArea'); if(areaSel && d.t==='light') areaSel.onchange=()=>{ keepName(); captureDraft(); d.ch=0; renderSceneEditor(m); };
   const pct=$('#adPct'); if(pct) pct.oninput=()=>{ const v=$('#adPctV'); if(v) v.textContent=pct.value+'%'; };
-  m.querySelectorAll('#adActSeg button').forEach(b=>b.onclick=()=>{ d.act=b.dataset.act; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
+  m.querySelectorAll('#adActSeg button').forEach(b=>b.onclick=()=>{ keepName(); captureDraft(); d.act=b.dataset.act; renderSceneEditor(m); });
   m.querySelectorAll('#adPwSeg button').forEach(b=>b.onclick=()=>{ keepName(); captureDraft(); d.on=b.dataset.on==='1'; renderSceneEditor(m); });
   m.querySelectorAll('#adModeSeg button').forEach(b=>b.onclick=()=>{ d.mode=b.dataset.md; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
   const bump=delta=>{ const h=$('#adTemp'); let t=Math.max(TEMP_MIN,Math.min(TEMP_MAX,(+h.value||24)+delta)); h.value=t; d.temp=t; const lab=$('#adTempV'); if(lab) lab.textContent=t+'°'; };
@@ -2646,6 +2705,158 @@ function bindSceneEditor(m, T){
       _sceneEdit=null; _actDraft=null; toast('התרחיש נשמר ✅'); await loadScenes(); render();
     }catch(e){ toast('שמירה נכשלה: '+e.message,5000); btn.disabled=false; btn.textContent='שמור תרחיש'; }
   };
+}
+
+/* ───────── Automations (אוטומציות) — run a scene at a time, executed on the EG scheduler ─────────
+   The EG (Philips Dynalite Ethernet Gateway) has a native 40-slot scheduler reached over the LOCAL
+   network via WebPage.cgi. On save (local only) the app compiles the chosen scene into EG tasks and
+   writes an enabled schedule to a free slot; it then runs 24/7 on the EG, phone or not. */
+const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const DOW_HE = ['א','ב','ג','ד','ה','ו','ש'];   // index 0..6 = Sunday..Saturday (JS getDay / EG FDOW)
+let _autos = [];
+let _autoEdit = null;
+let _confirmDelA = null;
+let _scTab = 'scenes';   // 'scenes' | 'autos'
+async function loadAutomations(){ if(!P||!P._server){ _autos=[]; return; } try{ _autos = await Backend.listAutomations(P._server.id); }catch(e){} }
+
+// ── EG scheduler client (local network) ──
+const EG = {
+  async read(){
+    const t = await gwFetch('/WebPage.cgi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ request:{ main:'scheduler', sub:'schedules', find:'all' } }) });
+    const j = JSON.parse(t); return [].concat((j.reply && j.reply.value) || []);
+  },
+  async write(sched){
+    const body = { update:{ main:'scheduler', sub:'schedules', find:'Id', range:[sched.Id, sched.Id], value:[sched] } };
+    const t = await gwFetch('/WebPage.cgi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const j = JSON.parse(t); if(!(j.reply && j.reply.ack)) throw new Error('ה-EG דחה את הכתיבה'); return true;
+  }
+};
+// A blank (disabled, no actions) EG schedule object for a given slot id — used to build or clear a slot.
+function egBlank(id){
+  return { Id:id, Name:'Undefined Schedule', Enabled:false, Type:false,
+    FDOW:[1,1,1,1,1,1,1], FDOM:Array(31).fill(1), FWOM:[0,1,1,1,1,1], FMOY:Array(12).fill(1), FPH:'IgnAll',
+    SpecialInc:[], SpecialExc:[], ADate:{ SDate:[2019,12,4], TDisable:true, TDate:[2019,12,4], EDate:[9999,12,31], EDisable:true },
+    SEvent:{ Type:false, AstOffset:false, AstRef:false, Time:[9,0,0], TaskList:[] },
+    TEvent:{ Enabled:false, Time:[0,0,0], TaskList:[] },
+    EEvent:{ Type:false, AstOffset:false, AstRef:false, Time:[23,59,59], TaskList:[] } };
+}
+// Linear % → EG channel level byte (0..255). Direction verified against the site (255 = full).
+const PCT_TO_CHLEVEL = pct => Math.round(Math.max(0, Math.min(100, pct)) * 255 / 100);
+// Compile a scene's actions into EG scheduler tasks (lights + covers; A/C is skipped — not on the DyNet bus).
+function sceneToEgTasks(scene){
+  const tasks = [];
+  for(const ac of (scene.actions||[])){
+    if(ac.t==='light'){
+      const a = P.areas[ac.area]; if(!a) continue;
+      const chans = ac.ch ? [ac.ch] : a.channels.map(c=>c.id);
+      for(const ch of chans){
+        const c = a.channels.find(x=>x.id===ch); const sw = c && isSwitch(c);
+        tasks.push({ type:171, opc:16, subopc:2, mask:255, area:ac.area, join:255, channel:ch, chLevel:PCT_TO_CHLEVEL(ac.pct), fadeMs: sw?0:2000 });
+      }
+    } else if(ac.t==='cover'){
+      tasks.push({ type:171, opc:1, mask:255, area:ac.area, join:255, preset: ac.act==='open'?1 : ac.act==='close'?2 : 4, fadeMs:0 });
+      // a cover's "stop after delay" can't ride a single EG event — it applies only when the scene is run by tap
+    }
+    // ac → skipped
+  }
+  return tasks;
+}
+// Build the EG schedule object for an automation + scene in a given slot.
+function autoToSchedule(auto, scene, slotId){
+  const s = egBlank(slotId);
+  s.Name = (auto.name||'').slice(0,40) || 'אוטומציה';
+  s.Enabled = !!auto.enabled;
+  const parts = String(auto.time||'09:00').split(':');
+  s.SEvent.Time = [ (+parts[0]||0), (+parts[1]||0), 0 ];
+  const days = (auto.days && auto.days.length) ? auto.days : [0,1,2,3,4,5,6];
+  s.FDOW = [0,1,2,3,4,5,6].map(d => days.indexOf(d)>=0 ? 1 : 0);
+  s.SEvent.TaskList = scene ? sceneToEgTasks(scene) : [];
+  return s;
+}
+// Pick a free EG slot (disabled, empty, still named "Undefined Schedule") not already used by our automations.
+function egAllocSlot(scheds){
+  const used = new Set(_autos.map(a=>a.eg_slot).filter(x=>x!=null));
+  for(const s of scheds){
+    if(used.has(s.Id)) continue;
+    const empty = !s.Enabled && (!s.SEvent || !s.SEvent.TaskList || !s.SEvent.TaskList.length) && /^Undefined Schedule$/.test(s.Name||'');
+    if(empty) return s.Id;
+  }
+  return null;
+}
+function renderAutos(m){
+  const box = $('#autoBody'); if(!box) return;
+  const local = cfg.activeConn==='local';
+  const gate = local ? '' : `<div class="note auto-gate">עריכת אוטומציות אפשרית רק כשאתה מחובר ל<b>רשת המקומית</b> (באתר). כרגע החיבור חיצוני — צפייה בלבד.</div>`;
+  box.innerHTML = `<div class="scenes-head"><div><h2>אוטומציות</h2><div class="note">הפעלת תרחיש בשעה קבועה — רץ על ה-EG, גם כשהטלפון כבוי.</div></div>${local?'<button class="btn primary" id="auNew">+ חדשה</button>':''}</div>
+    ${gate}<div class="scene-list" id="autoList"><div class="note">טוען…</div></div>`;
+  $('#auNew') && ($('#auNew').onclick = () => { _autoEdit = { name:'', scene_id:(_scenes[0]&&_scenes[0].id)||'', time:'09:00', days:[], enabled:true }; _confirmDelA=null; render(); });
+  Promise.all([loadScenes(), loadAutomations()]).then(() => drawAutoList(local))
+    .catch(e => { const el=$('#autoList'); if(el) el.innerHTML = `<div class="empty">טעינה נכשלה: ${esc(e.message)}</div>`; });
+}
+const daysLabel = days => (!days || !days.length) ? 'כל יום' : days.slice().sort().map(d=>DOW_HE[d]).join('·');
+function autoCard(a, local){
+  if(_confirmDelA===a.id){
+    return `<div class="scene-card confirm"><span class="sc-nm">למחוק את „${esc(a.name)}”?</span>
+      <div class="scene-ops" style="flex-direction:row"><button class="btn scbtn" data-adelno="${a.id}">ביטול</button><button class="btn scbtn danger" data-adelyes="${a.id}">מחק</button></div></div>`;
+  }
+  const sc = _scenes.find(s=>s.id===a.scene_id);
+  return `<div class="scene-card">
+    <div class="scene-run auto-run${a.enabled?'':' off'}"><span class="sc-ic">${CLOCK_SVG}</span>
+      <span class="sc-txt"><span class="sc-nm">${esc(a.name)}</span>
+        <span class="sc-meta">${esc(a.time)} · ${daysLabel(a.days)} · ${sc?esc(sc.name):'תרחיש נמחק'}${a.enabled?'':' · כבוי'}</span></span></div>
+    ${local?`<div class="scene-ops"><button class="iconbtn" data-aedit="${a.id}" aria-label="ערוך">${EDIT_SVG}</button><button class="iconbtn" data-adel="${a.id}" aria-label="מחק">${TRASH_SVG}</button></div>`:''}
+  </div>`;
+}
+function drawAutoList(local){
+  const box = $('#autoList'); if(!box) return;
+  box.innerHTML = _autos.map(a=>autoCard(a,local)).join('') || `<div class="empty">אין אוטומציות עדיין.${local?'':' התחבר ברשת המקומית כדי להוסיף.'}</div>`;
+  box.querySelectorAll('[data-aedit]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.aedit); if(a){ _autoEdit=JSON.parse(JSON.stringify(a)); _confirmDelA=null; render(); } });
+  box.querySelectorAll('[data-adel]').forEach(b=>b.onclick=()=>{ _confirmDelA=b.dataset.adel; drawAutoList(local); });
+  box.querySelectorAll('[data-adelno]').forEach(b=>b.onclick=()=>{ _confirmDelA=null; drawAutoList(local); });
+  box.querySelectorAll('[data-adelyes]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.adelyes); if(a) autoDelete(a); });
+}
+async function autoDelete(a){
+  try{
+    if(cfg.activeConn==='local' && a.eg_slot!=null){ try{ await EG.write(egBlank(a.eg_slot)); }catch(_){} }
+    await Backend.deleteAutomation(a.id); _autos=_autos.filter(x=>x.id!==a.id); _confirmDelA=null; toast('האוטומציה נמחקה'); render();
+  }catch(e){ toast('מחיקה נכשלה: '+e.message,5000); }
+}
+function renderAutoEditor(m){
+  const ed = _autoEdit;
+  const sceneOpts = _scenes.map(s=>`<option value="${s.id}" ${s.id===ed.scene_id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const dayChips = [0,1,2,3,4,5,6].map(d=>`<button type="button" class="daychip" data-day="${d}" aria-pressed="${(ed.days||[]).indexOf(d)>=0}">${DOW_HE[d]}</button>`).join('');
+  m.innerHTML = `<div class="scenes-wrap scene-edit">
+    <div class="field"><label>שם האוטומציה</label><input id="auName" value="${esc(ed.name||'')}" placeholder="למשל: הדלקת כניסה בבוקר" autocomplete="off"></div>
+    <div class="field"><label>תרחיש להפעלה</label><select id="auScene">${sceneOpts || '<option value="">— אין תרחישים, צור תרחיש קודם —</option>'}</select></div>
+    <div class="field"><label>שעה</label><input id="auTime" type="time" value="${esc(ed.time||'09:00')}"></div>
+    <div class="field"><label>ימים <small>(ריק = כל יום)</small></label><div class="daychips" id="auDays">${dayChips}</div></div>
+    <label class="chkrow"><input type="checkbox" id="auEnabled" ${ed.enabled?'checked':''}> מופעלת</label>
+    <div class="sc-actions"><button class="btn" id="auCancel">ביטול</button><button class="btn primary" id="auSave">שמור</button></div>
+  </div>`;
+  m.querySelectorAll('#auDays .daychip').forEach(b=>b.onclick=()=>{ const d=+b.dataset.day; ed.days=ed.days||[]; const i=ed.days.indexOf(d); if(i>=0) ed.days.splice(i,1); else ed.days.push(d); b.setAttribute('aria-pressed', ed.days.indexOf(d)>=0); });
+  $('#auCancel').onclick = () => { _autoEdit=null; render(); };
+  $('#auSave').onclick = (ev) => saveAutomation(ev);
+}
+async function saveAutomation(ev){
+  const ed = _autoEdit;
+  if(cfg.activeConn!=='local'){ toast('צריך חיבור לרשת המקומית כדי לכתוב ל-EG',5000); return; }
+  const name = ($('#auName').value||'').trim(); if(!name){ toast('תן שם לאוטומציה'); return; }
+  const scene_id = $('#auScene').value; const scene = _scenes.find(s=>s.id===scene_id);
+  if(!scene){ toast('בחר תרחיש להפעלה'); return; }
+  const time = $('#auTime').value || '09:00';
+  const enabled = $('#auEnabled').checked;
+  const days = (ed.days||[]).slice().sort();
+  const btn = ev.currentTarget; if(btn.disabled) return; btn.disabled=true; btn.textContent='כותב ל-EG…';
+  try{
+    const scheds = await EG.read();
+    let slot = (ed.eg_slot!=null) ? ed.eg_slot : egAllocSlot(scheds);
+    if(slot==null) throw new Error('אין סלוט פנוי ב-EG (40 תפוסים)');
+    await EG.write(autoToSchedule({ name, time, days, enabled }, scene, slot));
+    const fields = { name, scene_id, time, days, enabled, eg_slot:slot };
+    if(ed.id) await Backend.updateAutomation(ed.id, fields);
+    else      await Backend.createAutomation(P._server.id, fields);
+    _autoEdit=null; toast('האוטומציה נשמרה ונכתבה ל-EG ✅'); await loadAutomations(); render();
+  }catch(e){ toast('שמירה נכשלה: '+e.message, 6000); btn.disabled=false; btn.textContent='שמור'; }
 }
 function renderAreas(m){
   if(USER) return renderUserAreas(m);
