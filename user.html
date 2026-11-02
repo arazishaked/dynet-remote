@@ -1380,7 +1380,7 @@ const Backend = {
   async uploadBlob(projectId, bytes){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const body = bytes instanceof Blob ? bytes : new Blob([bytes], { type:'application/octet-stream' });
-    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream' });
+    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream', cacheControl:'0' });
     if(error) throw new Error(error.message);
     return true;
   },
@@ -1443,6 +1443,16 @@ const Backend = {
   },
   async downloadBlob(projectId){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    // Fetch via a short-lived signed URL with a cache-buster, so a file just re-synced from Dropbox is
+    // never served from the Storage/CDN cache (which otherwise returns the OLD content for up to an hour).
+    try{
+      const { data:sg, error:se } = await sb.storage.from(BUCKET).createSignedUrl(blobPath(projectId), 120);
+      if(!se && sg && sg.signedUrl){
+        const u = sg.signedUrl + (sg.signedUrl.indexOf('?')>-1?'&':'?') + 'cb=' + Date.now();
+        const r = await fetch(u, { cache:'no-store' });
+        if(r.ok) return await r.arrayBuffer();
+      }
+    }catch(_){ /* fall back to direct download below */ }
     const { data, error } = await sb.storage.from(BUCKET).download(blobPath(projectId));
     if(error) throw new Error(error.message);
     return await data.arrayBuffer();
@@ -1514,7 +1524,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1102-1205";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1102-1215";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */

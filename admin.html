@@ -912,7 +912,7 @@ const Backend = {
   async uploadBlob(projectId, bytes){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const body = bytes instanceof Blob ? bytes : new Blob([bytes], { type:'application/octet-stream' });
-    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream' });
+    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream', cacheControl:'0' });
     if(error) throw new Error(error.message);
     return true;
   },
@@ -975,6 +975,16 @@ const Backend = {
   },
   async downloadBlob(projectId){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    // Fetch via a short-lived signed URL with a cache-buster, so a file just re-synced from Dropbox is
+    // never served from the Storage/CDN cache (which otherwise returns the OLD content for up to an hour).
+    try{
+      const { data:sg, error:se } = await sb.storage.from(BUCKET).createSignedUrl(blobPath(projectId), 120);
+      if(!se && sg && sg.signedUrl){
+        const u = sg.signedUrl + (sg.signedUrl.indexOf('?')>-1?'&':'?') + 'cb=' + Date.now();
+        const r = await fetch(u, { cache:'no-store' });
+        if(r.ok) return await r.arrayBuffer();
+      }
+    }catch(_){ /* fall back to direct download below */ }
     const { data, error } = await sb.storage.from(BUCKET).download(blobPath(projectId));
     if(error) throw new Error(error.message);
     return await data.arrayBuffer();
@@ -1465,10 +1475,16 @@ function renderDetail(){
     body.appendChild(el('div','note','וילונות · צלונים · חלונות · פרגולות וכו׳. לכל פריט: לאיזה חדר לשייך אותו, „אזור עצמאי” כדי שיופיע כחדר נפרד, או „הסתר”. „אוטומטי” = המערכת מחליטה לפי השם. כאן מתקנים כל מה שנכנס לחדר הלא נכון או שלא הופיע.'));
     if(!sys.length) body.appendChild(el('div','note','לא זוהו מערכות (וילונות/צלונים/חלונות) בקובץ.'));
     else {
+      const search=el('input'); search.type='search'; search.placeholder='חיפוש לפי שם או קומה…';
+      search.setAttribute('dir','rtl');
+      search.style.cssText='width:100%;margin-top:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font-size:14px';
+      body.appendChild(search);
+      const noRes=el('div','note','אין תוצאות לחיפוש.'); noRes.style.display='none';
       const box=el('div','list'); box.style.marginTop='10px';
       sys.forEach(s=>{
         const cur=(cfg.sysRoom||{})[s.id]; const selVal=cur==null?'':String(cur);
         const row=el('div','item');
+        row.dataset.search=((s.name||'')+' '+(s.floor||'')).toLowerCase();
         row.innerHTML=`<div class="nm"><b>${esc(s.name)}</b><small>${esc(s.floor)}</small></div>
           <select data-sys="${s.id}" style="flex:1;max-width:210px">
             <option value="" ${selVal===''?'selected':''}>אוטומטי</option>
@@ -1479,6 +1495,15 @@ function renderDetail(){
         box.appendChild(row);
       });
       body.appendChild(box);
+      body.appendChild(noRes);
+      search.oninput=()=>{
+        const q=search.value.trim().toLowerCase(); let shown=0;
+        box.querySelectorAll('.item').forEach(r=>{
+          const hit=!q || r.dataset.search.indexOf(q)>-1;
+          r.style.display=hit?'':'none'; if(hit) shown++;
+        });
+        noRes.style.display=shown?'none':'';
+      };
       box.querySelectorAll('select[data-sys]').forEach(sel=>sel.onchange=async()=>{
         const id=sel.dataset.sys, v=sel.value;
         const srNow=Object.assign({}, cfgOf(state.sel).sysRoom||{});
