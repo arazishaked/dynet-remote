@@ -978,6 +978,70 @@ const Backend = {
     const { data, error } = await sb.storage.from(BUCKET).download(blobPath(projectId));
     if(error) throw new Error(error.message);
     return await data.arrayBuffer();
+  },
+
+  /* ── scenes (per user, per project) ── */
+  async listScenes(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('scenes').select('*')
+      .eq('project_id', projectId).order('sort', { ascending:true }).order('created_at', { ascending:true });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createScene(projectId, name, actions){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('scenes')
+      .insert({ user_id:user.id, project_id:projectId, name, actions:actions||[] })
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async updateScene(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('scenes')
+      .update(Object.assign({}, fields, { updated_at:new Date().toISOString() }))
+      .eq('id', id).select();
+    if(error) throw new Error(error.message);
+    if(!data || !data.length) throw new Error('השמירה נכשלה.');
+    return data[0];
+  },
+  async deleteScene(id){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('scenes').delete().eq('id', id);
+    if(error) throw new Error(error.message);
+  },
+
+  /* ── automations (per user, per project) ── */
+  async listAutomations(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('automations').select('*')
+      .eq('project_id', projectId).order('time', { ascending:true });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createAutomation(projectId, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('automations')
+      .insert(Object.assign({ user_id:user.id, project_id:projectId }, fields))
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async updateAutomation(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('automations')
+      .update(Object.assign({}, fields, { updated_at:new Date().toISOString() }))
+      .eq('id', id).select();
+    if(error) throw new Error(error.message);
+    if(!data || !data.length) throw new Error('השמירה נכשלה.');
+    return data[0];
+  },
+  async deleteAutomation(id){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('automations').delete().eq('id', id);
+    if(error) throw new Error(error.message);
   }
 };
 
@@ -1044,11 +1108,31 @@ const Dbx = (function(){
     entries.sort((a,b)=>{ const ka=fileDateKey(a),kb=fileDateKey(b); return kb!==ka?kb-ka:(b.server_modified||'').localeCompare(a.server_modified||''); });
     return entries[0];
   }
+  // Resolve the "dynalite" folder so searches look only inside it, not the whole Dropbox.
+  let _root;
+  async function dynaliteRoot(){
+    if(_root!==undefined) return _root;
+    try{
+      const top=await listFolder('');
+      let hit=top.find(e=>e['.tag']==='folder' && /^dynalite$/i.test(e.name||''));
+      if(!hit){
+        const sr=await api('files/search_v2', { query:'dynalite', options:{ max_results:100, file_status:'active', filename_only:true } });
+        hit=(sr.matches||[]).map(m=>m.metadata&&m.metadata.metadata)
+          .find(md=>md&&md['.tag']==='folder'&&/^dynalite$/i.test(md.name||''));
+      }
+      _root=hit?(hit.path_lower||''):'';
+    }catch(e){ _root=''; }
+    return _root;
+  }
   async function searchFolders(q){
-    const res=await api('files/search_v2', { query:q, options:{ max_results:100, file_status:'active', filename_only:true } });
+    const root=await dynaliteRoot();
+    const opts={ max_results:100, file_status:'active', filename_only:true };
+    if(root) opts.path=root;                 // search only inside the "dynalite" folder
+    const res=await api('files/search_v2', { query:q, options:opts });
     const seen={};
     return (res.matches||[]).map(m=>m.metadata&&m.metadata.metadata)
-      .filter(md=>md&&md['.tag']==='folder'&&md.path_lower&&!seen[md.path_lower]&&(seen[md.path_lower]=1));
+      .filter(md=>md&&md['.tag']==='folder'&&md.path_lower&&!seen[md.path_lower]&&(seen[md.path_lower]=1))
+      .filter(md=>!root||md.path_lower.startsWith(root+'/')||md.path_lower===root);
   }
   async function download(path){
     const tok=await token(); if(!tok) throw new Error('יש להתחבר ל-Dropbox');
@@ -1097,7 +1181,32 @@ function lightingFloors(P){
 
 /* ---- state ---- */
 const state = { me:null, projects:[], sel:null, parsed:null, users:[], assigned:[], q:'' };
-const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95, cmIp:'', cmPort:10102, cmExtIp:'', cmExtPort:'', acUnits:[] }, (p && p.config) || {});
+const cfgOf = p => Object.assign({ names:{}, includeAC:true, localBase:'', localPort:95, extBase:'', extPort:95, cmIp:'', cmPort:10102, cmExtIp:'', cmExtPort:'', acUnits:[], sysRoom:{} }, (p && p.config) || {});
+// Every system area (curtain/shade/window/pergola/…) with its floor — for the manual room-assignment UI.
+function adminSystems(P){
+  const sys=[];
+  (function walk(node, floor, sysCtx){
+    (node.children||[]).forEach(c=>{
+      if(c.type==='folder') walk(c, floor||c.name, sysCtx || isSys(c.name));
+      else if(c.type==='area'){
+        const a=P.areas[c.id]; if(!a) return;
+        if(isAC(a.name||'')) return;                         // A/C handled separately
+        const fn=floor||'כללי';
+        if(sysCtx || isSys(a.name||'')) sys.push({ id:a.id, name:a.name||('אזור '+a.id), floor:fn });
+      }
+    });
+  })(P.tree,'',false);
+  return sys;
+}
+function roomOptionsPlain(selected){
+  if(!state.parsed) return '';
+  let html='';
+  lightingFloors(state.parsed).forEach(fl=>{ html+=`<optgroup label="${esc(fl.floor)}">`;
+    fl.rooms.forEach(a=>{ const nm=(cfgOf(state.sel).names[a.id])||a.name||('אזור '+a.id);
+      html+=`<option value="${a.id}" ${String(selected)===String(a.id)?'selected':''}>${esc(nm)}</option>`; });
+    html+=`</optgroup>`; });
+  return html;
+}
 
 /* ---- boot ---- */
 function renderNewPassword(){
@@ -1346,6 +1455,39 @@ function renderDetail(){
     body.appendChild(save);
   }
   d.appendChild(rc);
+  // --- manual area / system assignment (override the app's automatic placement) ---
+  const sc=el('div','card');
+  if(!state.parsed){ sc.innerHTML=`<h2>שיוך אזורים ומערכות</h2>`; sc.appendChild(el('div','note','העלה קובץ ‎.dlj‎ כדי לשייך.')); }
+  else {
+    const sys=adminSystems(state.parsed);
+    sc.innerHTML=`<details class="collapse"><summary class="csum"><span class="ctitle">שיוך אזורים ומערכות</span><span class="cmeta">${sys.length} פריטים · לחץ לפתיחה</span></summary><div id="sysbody"></div></details>`;
+    const body=sc.querySelector('#sysbody');
+    body.appendChild(el('div','note','וילונות · צלונים · חלונות · פרגולות וכו׳. לכל פריט: לאיזה חדר לשייך אותו, „אזור עצמאי” כדי שיופיע כחדר נפרד, או „הסתר”. „אוטומטי” = המערכת מחליטה לפי השם. כאן מתקנים כל מה שנכנס לחדר הלא נכון או שלא הופיע.'));
+    if(!sys.length) body.appendChild(el('div','note','לא זוהו מערכות (וילונות/צלונים/חלונות) בקובץ.'));
+    else {
+      const box=el('div','list'); box.style.marginTop='10px';
+      sys.forEach(s=>{
+        const cur=(cfg.sysRoom||{})[s.id]; const selVal=cur==null?'':String(cur);
+        const row=el('div','item');
+        row.innerHTML=`<div class="nm"><b>${esc(s.name)}</b><small>${esc(s.floor)}</small></div>
+          <select data-sys="${s.id}" style="flex:1;max-width:210px">
+            <option value="" ${selVal===''?'selected':''}>אוטומטי</option>
+            <option value="own" ${selVal==='own'?'selected':''}>אזור עצמאי</option>
+            <option value="hide" ${selVal==='hide'?'selected':''}>הסתר</option>
+            ${roomOptionsPlain(cur)}
+          </select>`;
+        box.appendChild(row);
+      });
+      body.appendChild(box);
+      box.querySelectorAll('select[data-sys]').forEach(sel=>sel.onchange=async()=>{
+        const id=sel.dataset.sys, v=sel.value;
+        const srNow=Object.assign({}, cfgOf(state.sel).sysRoom||{});
+        if(v==='') delete srNow[id]; else srNow[id]=/^\d+$/.test(v)?+v:v;
+        await saveConfig({ sysRoom:srNow }, null, 'השיוך נשמר');
+      });
+    }
+  }
+  d.appendChild(sc);
   // --- users / assignment ---
   const uc=el('div','card'); uc.innerHTML = `<h2>משתמשים משויכים לפרויקט</h2><div class="list" id="ulist"><div class="note">טוען… <span class="spin"></span></div></div>
     <h2 style="margin-top:16px">הוסף משתמש</h2><div class="list" id="alist"></div>`;
