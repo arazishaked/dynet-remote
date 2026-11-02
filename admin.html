@@ -1228,11 +1228,19 @@ function adminAssignGroups(P){
 }
 function roomOptionsPlain(selected){
   if(!state.parsed) return '';
-  let html='';
-  lightingFloors(state.parsed).forEach(fl=>{ html+=`<optgroup label="${esc(fl.floor)}">`;
+  let html=`<optgroup label="— שיוך לחדר —">`;
+  lightingFloors(state.parsed).forEach(fl=>{
     fl.rooms.forEach(a=>{ const nm=(cfgOf(state.sel).names[a.id])||a.name||('אזור '+a.id);
       html+=`<option value="${a.id}" ${String(selected)===String(a.id)?'selected':''}>${esc(nm)}</option>`; });
-    html+=`</optgroup>`; });
+  });
+  html+=`</optgroup>`;
+  // Also allow pinning an area into a FOLDER (floor group) — value prefixed "f:" to tell it from a room id.
+  const folders=adminAssignGroups(state.parsed).map(g=>g.folder);
+  if(folders.length){
+    html+=`<optgroup label="— שיוך לתיקייה —">`;
+    folders.forEach(f=>{ const v='f:'+f; html+=`<option value="${esc(v)}" ${String(selected)===v?'selected':''}>${esc(f)}</option>`; });
+    html+=`</optgroup>`;
+  }
   return html;
 }
 

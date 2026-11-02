@@ -1524,7 +1524,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1102-1232";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1102-1247";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2374,6 +2374,7 @@ function classifyUser(){
         // Manual override wins over everything (including A/C exclusion and the generic filter).
         if(o==='hide') return;
         if(o==='own'){ addRoom(a, fn); return; }
+        if(typeof o==='string' && o.slice(0,2)==='f:'){ addRoom(a, o.slice(2)||fn); return; }   // pinned to a folder → own tile under that folder
         if(o!=null && /^\d+$/.test(String(o))){
           // Pinned to a room: a cover/system shows as that room's cover; a light shows as a tile under that room's folder.
           if(t && t!=='ac') systems.push({ area:a, type:t, forceRoom:+o });
