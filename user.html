@@ -1508,7 +1508,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1102-0611";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1102-0655";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1621,6 +1621,8 @@ const CHTYPE = { 0:'וירטואלי', 1:'עמעום', 3:'מיתוג', 11:'מנ�
 // NOTE: system→room matching (classifyUser) must use a.name (the original), never this.
 const areaName = a => { if(!a) return ''; const o = P&&P.tech&&P.tech.names&&P.tech.names[a.id]; return o || a.name || (a.id===1 ? 'אזור 1 · ערוצים לא משויכים' : 'אזור '+a.id); };
 const chName = ch => ch.name || 'ערוץ '+ch.id;
+// For the end-user display: show the project/file name without the trailing date and without .dlj.
+const cleanProjName = s => { s=(s||'').replace(/\.dlj$/i,'').trim(); return s.replace(/[\s\-_,.]*\d{1,2}[.\-_\/ ]\d{1,2}([.\-_\/ ]\d{2,4})?\s*$/,'').trim() || s; };
 const devLabel = d => d ? ((d.name||KIND[d.kind]) + (d.location ? ' · '+d.location : '')) : '?';
 const presetName = (a, p) => a.presets[String(p)] || (p===4 ? 'Off' : '');
 const isSwitch = ch => ch.type===3;
@@ -2299,7 +2301,7 @@ function render(){
   const m = $('#main');
   if(!P && route.tab!=='setup' && route.tab!=='log'){ route.tab='setup'; return render(); }
   if(route.area!=null) return renderArea(m, P.areas[route.area]);
-  $('#hTitle').textContent = P ? P.name : 'DyNet Remote';
+  $('#hTitle').textContent = P ? (USER ? cleanProjName(P.name) : P.name) : 'DyNet Remote';
   $('#hSub').textContent = (P ? `${Object.keys(P.areas).length} אזורים${USER?'':` · ${P.deviceOrder.length} בקרים`}` : 'לא נטען פרויקט') + (BUILD_ID && BUILD_ID[0] !== '/' ? ` · build ${BUILD_ID}` : '');
   ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup, scenes:renderScenes })[route.tab](m);
 }
@@ -4289,7 +4291,7 @@ async function userLoadProject(){
   // more than one assigned → let the user choose
   uov(`${uBrand}<h2>בחר פרויקט</h2><div class="uov-note">שויכו אליך כמה פרויקטים.</div><div id="uplist" class="uov-list"></div>`);
   const list=$('#uplist');
-  projs.forEach(p=>{ const b=document.createElement('button'); b.className='btn'; b.style.width='100%'; b.textContent=p.name; b.onclick=()=>userOpenProject(p); list.appendChild(b); });
+  projs.forEach(p=>{ const b=document.createElement('button'); b.className='btn'; b.style.width='100%'; b.textContent=cleanProjName(p.name); b.onclick=()=>userOpenProject(p); list.appendChild(b); });
   const out=document.createElement('button'); out.className='btn ghost'; out.style.marginTop='10px'; out.textContent='התנתק'; out.onclick=async()=>{ await Backend.signOut(); location.reload(); }; list.appendChild(out);
 }
 function userNoProject(){
@@ -4334,12 +4336,17 @@ function applyUserConn(tech, parsed){
   cfg.conn = 'auto';
   saveCfg();
 }
-let _userSync=null;
+let _userSync=null, _syncTick=0;
 function startUserSync(projectId){
   if(_userSync) clearInterval(_userSync);
+  _syncTick=0;
   _userSync=setInterval(async()=>{
     if(!P || !P._server || document.querySelector('.modal-ov')) return;
-    try{ const v=await Backend.projectVersion(projectId);
+    try{
+      // Every ~3 minutes, ask the server to pull the newest .dlj from the tracked Dropbox folder, so a new
+      // or re-saved file is detected on its own — no technician needed. The version check below then re-pulls it.
+      if((++_syncTick % 6)===0){ try{ await Backend.syncDropbox(projectId); }catch(_){} }
+      const v=await Backend.projectVersion(projectId);
       if(v!=null && P._server && v!==P._server.version){
         const projs=await Backend.assignedProjects(); const proj=projs.find(x=>x.id===projectId);
         if(proj){ const buf=await Backend.downloadBlob(projectId); const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
