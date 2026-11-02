@@ -1508,7 +1508,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1102-0556";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1102-0611";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2641,9 +2641,11 @@ function buildAction(d, T){
   const u=T.acs.find(x=>x.uid===d.uid)||T.acs[0]; if(!u) return null;
   return d.on ? { t:'ac', uid:u.uid, on:true, mode:d.mode||'cool', temp:+d.temp } : { t:'ac', uid:u.uid, on:false };
 }
-function renderSceneEditor(m){
-  const ed=_sceneEdit, d=_actDraft || (_actDraft=freshDraft('light'));
-  const T = sceneTargets(), { lights, covers, acs } = T;
+// Shared action-builder (used by both the scene editor and the automation editor):
+// an action list + an "add action" panel. Operates on ed.actions.
+function actionsBlockHtml(ed, title){
+  const d=_actDraft || (_actDraft=freshDraft('light'));
+  const { lights, covers, acs } = sceneTargets();
   const listHtml = (ed.actions||[]).length
     ? ed.actions.map((a,i)=>`<div class="act-row"><span class="act-tx">${esc(actDescribe(a))}</span><button class="iconbtn" data-actdel="${i}" aria-label="הסר">${TRASH_SVG}</button></div>`).join('')
     : `<div class="note">עדיין אין פעולות — הוסף למטה.</div>`;
@@ -2669,31 +2671,36 @@ function renderSceneEditor(m){
       <div class="field"><label>טמפרטורה</label><div class="tempstep"><button id="adTempDn" type="button">−</button><b id="adTempV">${d.temp}°</b><button id="adTempUp" type="button">+</button><input type="hidden" id="adTemp" value="${d.temp}"></div></div>`:''}` : `<div class="note">אין מזגנים.</div>`;
   }
   const typeBtn=(t,l)=>`<button data-type="${t}" aria-pressed="${d.t===t}">${l}</button>`;
-  m.innerHTML = `<div class="scenes-wrap scene-edit">
-    <div class="field"><label>שם התרחיש</label><input id="scName" value="${esc(ed.name||'')}" placeholder="למשל: ערב · יציאה מהבית · שינה" autocomplete="off"></div>
-    <section class="sc-sec"><h3>פעולות בתרחיש</h3><div id="actList">${listHtml}</div></section>
+  return `<section class="sc-sec"><h3>${esc(title)}</h3><div id="actList">${listHtml}</div></section>
     <section class="sc-sec addsec"><h3>הוספת פעולה</h3>
       <div class="seg typeSeg" id="adTypeSeg">${typeBtn('light','תאורה')}${typeBtn('cover','וילון/צלון')}${typeBtn('ac','מזגן')}</div>
       <div class="add-fields">${fields}</div>
-      <button class="btn primary" id="adAdd" style="width:100%;margin-top:6px">+ הוסף לתרחיש</button></section>
-    <div class="sc-actions"><button class="btn" id="scCancel">ביטול</button><button class="btn primary" id="scSave">שמור תרחיש</button></div>
-  </div>`;
-  bindSceneEditor(m, T);
+      <button class="btn primary" id="adAdd" style="width:100%;margin-top:6px">+ הוסף</button></section>`;
 }
-function bindSceneEditor(m, T){
-  const ed=_sceneEdit, d=_actDraft;
-  const keepName=()=>{ const n=$('#scName'); if(n) ed.name=n.value; };
-  m.querySelectorAll('#adTypeSeg button').forEach(b=>b.onclick=()=>{ keepName(); _actDraft=freshDraft(b.dataset.type); renderSceneEditor(m); });
-  const areaSel=$('#adArea'); if(areaSel && d.t==='light') areaSel.onchange=()=>{ keepName(); captureDraft(); d.ch=0; renderSceneEditor(m); };
+// sync() captures the editor's own fields into ed before any re-render; rerender(m) repaints it.
+function bindActionsBlock(m, ed, sync, rerender){
+  const d=_actDraft, T=sceneTargets();
+  m.querySelectorAll('#adTypeSeg button').forEach(b=>b.onclick=()=>{ sync(); _actDraft=freshDraft(b.dataset.type); rerender(m); });
+  const areaSel=$('#adArea'); if(areaSel && d.t==='light') areaSel.onchange=()=>{ sync(); captureDraft(); d.ch=0; rerender(m); };
   const pct=$('#adPct'); if(pct) pct.oninput=()=>{ const v=$('#adPctV'); if(v) v.textContent=pct.value+'%'; };
-  m.querySelectorAll('#adActSeg button').forEach(b=>b.onclick=()=>{ keepName(); captureDraft(); d.act=b.dataset.act; renderSceneEditor(m); });
-  m.querySelectorAll('#adPwSeg button').forEach(b=>b.onclick=()=>{ keepName(); captureDraft(); d.on=b.dataset.on==='1'; renderSceneEditor(m); });
+  m.querySelectorAll('#adActSeg button').forEach(b=>b.onclick=()=>{ sync(); captureDraft(); d.act=b.dataset.act; rerender(m); });
+  m.querySelectorAll('#adPwSeg button').forEach(b=>b.onclick=()=>{ sync(); captureDraft(); d.on=b.dataset.on==='1'; rerender(m); });
   m.querySelectorAll('#adModeSeg button').forEach(b=>b.onclick=()=>{ d.mode=b.dataset.md; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
   const bump=delta=>{ const h=$('#adTemp'); let t=Math.max(TEMP_MIN,Math.min(TEMP_MAX,(+h.value||24)+delta)); h.value=t; d.temp=t; const lab=$('#adTempV'); if(lab) lab.textContent=t+'°'; };
   $('#adTempUp') && ($('#adTempUp').onclick=()=>bump(1));
   $('#adTempDn') && ($('#adTempDn').onclick=()=>bump(-1));
-  $('#adAdd').onclick=()=>{ keepName(); captureDraft(); const a=buildAction(_actDraft,T); if(!a){ toast('אין יעד לבחור לפעולה הזו'); return; } ed.actions=ed.actions||[]; ed.actions.push(a); renderSceneEditor(m); };
-  m.querySelectorAll('[data-actdel]').forEach(b=>b.onclick=()=>{ keepName(); ed.actions.splice(+b.dataset.actdel,1); renderSceneEditor(m); });
+  $('#adAdd').onclick=()=>{ sync(); captureDraft(); const a=buildAction(_actDraft,T); if(!a){ toast('אין יעד לבחור לפעולה הזו'); return; } ed.actions=ed.actions||[]; ed.actions.push(a); rerender(m); };
+  m.querySelectorAll('[data-actdel]').forEach(b=>b.onclick=()=>{ sync(); ed.actions.splice(+b.dataset.actdel,1); rerender(m); });
+}
+function renderSceneEditor(m){
+  const ed=_sceneEdit;
+  m.innerHTML = `<div class="scenes-wrap scene-edit">
+    <div class="field"><label>שם התרחיש</label><input id="scName" value="${esc(ed.name||'')}" placeholder="למשל: ערב · יציאה מהבית · שינה" autocomplete="off"></div>
+    ${actionsBlockHtml(ed, 'פעולות בתרחיש')}
+    <div class="sc-actions"><button class="btn" id="scCancel">ביטול</button><button class="btn primary" id="scSave">שמור תרחיש</button></div>
+  </div>`;
+  const sync=()=>{ const n=$('#scName'); if(n) ed.name=n.value; };
+  bindActionsBlock(m, ed, sync, renderSceneEditor);
   $('#scCancel').onclick=()=>{ _sceneEdit=null; _actDraft=null; render(); };
   $('#scSave').onclick=async(ev)=>{
     const name=($('#scName').value||'').trim(); if(!name){ toast('תן שם לתרחיש'); return; }
@@ -2761,8 +2768,8 @@ function sceneToEgTasks(scene){
   }
   return tasks;
 }
-// Build the EG schedule object for an automation + scene in a given slot.
-function autoToSchedule(auto, scene, slotId){
+// Build the EG schedule object for an automation + its combined action list in a given slot.
+function autoToSchedule(auto, actions, slotId){
   const s = egBlank(slotId);
   s.Name = (auto.name||'').slice(0,40) || 'אוטומציה';
   s.Enabled = !!auto.enabled;
@@ -2770,7 +2777,7 @@ function autoToSchedule(auto, scene, slotId){
   s.SEvent.Time = [ (+parts[0]||0), (+parts[1]||0), 0 ];
   const days = (auto.days && auto.days.length) ? auto.days : [0,1,2,3,4,5,6];
   s.FDOW = [0,1,2,3,4,5,6].map(d => days.indexOf(d)>=0 ? 1 : 0);
-  s.SEvent.TaskList = scene ? sceneToEgTasks(scene) : [];
+  s.SEvent.TaskList = sceneToEgTasks({ actions: actions||[] });
   return s;
 }
 // Pick a free EG slot (disabled, empty, still named "Undefined Schedule") not already used by our automations.
@@ -2789,7 +2796,7 @@ function renderAutos(m){
   const gate = local ? '' : `<div class="note auto-gate">עריכת אוטומציות אפשרית רק כשאתה מחובר ל<b>רשת המקומית</b> (באתר). כרגע החיבור חיצוני — צפייה בלבד.</div>`;
   box.innerHTML = `<div class="scenes-head"><div><h2>אוטומציות</h2><div class="note">הפעלת תרחיש בשעה קבועה — רץ על ה-EG, גם כשהטלפון כבוי.</div></div>${local?'<button class="btn primary" id="auNew">+ חדשה</button>':''}</div>
     ${gate}<div class="scene-list" id="autoList"><div class="note">טוען…</div></div>`;
-  $('#auNew') && ($('#auNew').onclick = () => { _autoEdit = { name:'', scene_id:(_scenes[0]&&_scenes[0].id)||'', time:'09:00', days:[], enabled:true }; _confirmDelA=null; render(); });
+  $('#auNew') && ($('#auNew').onclick = () => { _autoEdit = { name:'', scene_id:null, time:'09:00', days:[], enabled:true, actions:[] }; _actDraft=null; _confirmDelA=null; render(); });
   Promise.all([loadScenes(), loadAutomations()]).then(() => drawAutoList(local))
     .catch(e => { const el=$('#autoList'); if(el) el.innerHTML = `<div class="empty">טעינה נכשלה: ${esc(e.message)}</div>`; });
 }
@@ -2799,18 +2806,20 @@ function autoCard(a, local){
     return `<div class="scene-card confirm"><span class="sc-nm">למחוק את „${esc(a.name)}”?</span>
       <div class="scene-ops" style="flex-direction:row"><button class="btn scbtn" data-adelno="${a.id}">ביטול</button><button class="btn scbtn danger" data-adelyes="${a.id}">מחק</button></div></div>`;
   }
-  const sc = _scenes.find(s=>s.id===a.scene_id);
+  const sc = a.scene_id ? _scenes.find(s=>s.id===a.scene_id) : null;
+  const bits=[]; if(a.scene_id) bits.push(sc?esc(sc.name):'תרחיש נמחק'); if((a.actions||[]).length) bits.push(a.actions.length+' פעולות');
+  const what = bits.join(' + ') || '—';
   return `<div class="scene-card">
     <div class="scene-run auto-run${a.enabled?'':' off'}"><span class="sc-ic">${CLOCK_SVG}</span>
       <span class="sc-txt"><span class="sc-nm">${esc(a.name)}</span>
-        <span class="sc-meta">${esc(a.time)} · ${daysLabel(a.days)} · ${sc?esc(sc.name):'תרחיש נמחק'}${a.enabled?'':' · כבוי'}</span></span></div>
+        <span class="sc-meta">${esc(a.time)} · ${daysLabel(a.days)} · ${what}${a.enabled?'':' · כבוי'}</span></span></div>
     ${local?`<div class="scene-ops"><button class="iconbtn" data-aedit="${a.id}" aria-label="ערוך">${EDIT_SVG}</button><button class="iconbtn" data-adel="${a.id}" aria-label="מחק">${TRASH_SVG}</button></div>`:''}
   </div>`;
 }
 function drawAutoList(local){
   const box = $('#autoList'); if(!box) return;
   box.innerHTML = _autos.map(a=>autoCard(a,local)).join('') || `<div class="empty">אין אוטומציות עדיין.${local?'':' התחבר ברשת המקומית כדי להוסיף.'}</div>`;
-  box.querySelectorAll('[data-aedit]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.aedit); if(a){ _autoEdit=JSON.parse(JSON.stringify(a)); _confirmDelA=null; render(); } });
+  box.querySelectorAll('[data-aedit]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.aedit); if(a){ _autoEdit=JSON.parse(JSON.stringify(a)); _autoEdit.actions=_autoEdit.actions||[]; _actDraft=null; _confirmDelA=null; render(); } });
   box.querySelectorAll('[data-adel]').forEach(b=>b.onclick=()=>{ _confirmDelA=b.dataset.adel; drawAutoList(local); });
   box.querySelectorAll('[data-adelno]').forEach(b=>b.onclick=()=>{ _confirmDelA=null; drawAutoList(local); });
   box.querySelectorAll('[data-adelyes]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.adelyes); if(a) autoDelete(a); });
@@ -2822,40 +2831,46 @@ async function autoDelete(a){
   }catch(e){ toast('מחיקה נכשלה: '+e.message,5000); }
 }
 function renderAutoEditor(m){
-  const ed = _autoEdit;
-  const sceneOpts = _scenes.map(s=>`<option value="${s.id}" ${s.id===ed.scene_id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const ed = _autoEdit; ed.actions = ed.actions || [];
+  const sceneOpts = `<option value="" ${!ed.scene_id?'selected':''}>— ללא תרחיש —</option>` + _scenes.map(s=>`<option value="${s.id}" ${s.id===ed.scene_id?'selected':''}>${esc(s.name)}</option>`).join('');
   const dayChips = [0,1,2,3,4,5,6].map(d=>`<button type="button" class="daychip" data-day="${d}" aria-pressed="${(ed.days||[]).indexOf(d)>=0}">${DOW_HE[d]}</button>`).join('');
   m.innerHTML = `<div class="scenes-wrap scene-edit">
     <div class="field"><label>שם האוטומציה</label><input id="auName" value="${esc(ed.name||'')}" placeholder="למשל: הדלקת כניסה בבוקר" autocomplete="off"></div>
-    <div class="field"><label>תרחיש להפעלה</label><select id="auScene">${sceneOpts || '<option value="">— אין תרחישים, צור תרחיש קודם —</option>'}</select></div>
+    <div class="field"><label>הפעל תרחיש <small>(אופציונלי)</small></label><select id="auScene">${sceneOpts}</select></div>
     <div class="field"><label>שעה</label><input id="auTime" type="time" value="${esc(ed.time||'09:00')}"></div>
     <div class="field"><label>ימים <small>(ריק = כל יום)</small></label><div class="daychips" id="auDays">${dayChips}</div></div>
     <label class="chkrow"><input type="checkbox" id="auEnabled" ${ed.enabled?'checked':''}> מופעלת</label>
+    ${actionsBlockHtml(ed, 'פעולות ספציפיות' + (ed.scene_id?' (בנוסף לתרחיש)':''))}
     <div class="sc-actions"><button class="btn" id="auCancel">ביטול</button><button class="btn primary" id="auSave">שמור</button></div>
   </div>`;
+  const sync=()=>{ const n=$('#auName'); if(n) ed.name=n.value; const t=$('#auTime'); if(t) ed.time=t.value; const sc=$('#auScene'); if(sc) ed.scene_id=sc.value||null; const en=$('#auEnabled'); if(en) ed.enabled=en.checked; };
   m.querySelectorAll('#auDays .daychip').forEach(b=>b.onclick=()=>{ const d=+b.dataset.day; ed.days=ed.days||[]; const i=ed.days.indexOf(d); if(i>=0) ed.days.splice(i,1); else ed.days.push(d); b.setAttribute('aria-pressed', ed.days.indexOf(d)>=0); });
-  $('#auCancel').onclick = () => { _autoEdit=null; render(); };
+  const scSel=$('#auScene'); if(scSel) scSel.onchange=()=>{ sync(); renderAutoEditor(m); };   // re-render so the actions title reflects the scene
+  bindActionsBlock(m, ed, sync, renderAutoEditor);
+  $('#auCancel').onclick = () => { _autoEdit=null; _actDraft=null; render(); };
   $('#auSave').onclick = (ev) => saveAutomation(ev);
 }
 async function saveAutomation(ev){
   const ed = _autoEdit;
   if(cfg.activeConn!=='local'){ toast('צריך חיבור לרשת המקומית כדי לכתוב ל-EG',5000); return; }
   const name = ($('#auName').value||'').trim(); if(!name){ toast('תן שם לאוטומציה'); return; }
-  const scene_id = $('#auScene').value; const scene = _scenes.find(s=>s.id===scene_id);
-  if(!scene){ toast('בחר תרחיש להפעלה'); return; }
+  const scene_id = $('#auScene').value || null; const scene = scene_id ? _scenes.find(s=>s.id===scene_id) : null;
   const time = $('#auTime').value || '09:00';
   const enabled = $('#auEnabled').checked;
   const days = (ed.days||[]).slice().sort();
+  const own = ed.actions || [];
+  const combined = [ ...(scene ? (scene.actions||[]) : []), ...own ];
+  if(!combined.length){ toast('בחר תרחיש או הוסף לפחות פעולה אחת'); return; }
   const btn = ev.currentTarget; if(btn.disabled) return; btn.disabled=true; btn.textContent='כותב ל-EG…';
   try{
     const scheds = await EG.read();
     let slot = (ed.eg_slot!=null) ? ed.eg_slot : egAllocSlot(scheds);
     if(slot==null) throw new Error('אין סלוט פנוי ב-EG (40 תפוסים)');
-    await EG.write(autoToSchedule({ name, time, days, enabled }, scene, slot));
-    const fields = { name, scene_id, time, days, enabled, eg_slot:slot };
+    await EG.write(autoToSchedule({ name, time, days, enabled }, combined, slot));
+    const fields = { name, scene_id, actions:own, time, days, enabled, eg_slot:slot };
     if(ed.id) await Backend.updateAutomation(ed.id, fields);
     else      await Backend.createAutomation(P._server.id, fields);
-    _autoEdit=null; toast('האוטומציה נשמרה ונכתבה ל-EG ✅'); await loadAutomations(); render();
+    _autoEdit=null; _actDraft=null; toast('האוטומציה נשמרה ונכתבה ל-EG ✅'); await loadAutomations(); render();
   }catch(e){ toast('שמירה נכשלה: '+e.message, 6000); btn.disabled=false; btn.textContent='שמור'; }
 }
 function renderAreas(m){
