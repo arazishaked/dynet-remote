@@ -1616,6 +1616,28 @@ function renderDbxSection(host, p){
     const ref=el('button','btn sm','רענן לקובץ הכי חדש'); ref.onclick=()=>dbxUseFolder(p, p.dropbox_folder);
     const chg=el('button','btn ghost sm','שנה תיקייה'); chg.onclick=()=>openDbxPicker(host, p);
     row.appendChild(ref); row.appendChild(chg); host.appendChild(row);
+    // Run the SERVER-side sync (the same one the 10-min cron runs) and show exactly what it found — for diagnostics.
+    const row2=el('div','row'); row2.style.marginTop='8px';
+    const diag=el('pre','code'); diag.style.display='none'; diag.style.marginTop='8px';
+    const sync=el('button','btn sm','🔄 סנכרן עכשיו (שרת)');
+    sync.onclick=async()=>{
+      sync.disabled=true; const t0=sync.textContent; sync.textContent='בודק…';
+      try{
+        const r=await Backend.syncDropbox(p.id);
+        diag.style.display='block';
+        if(!r){ diag.textContent='השרת לא החזיר תשובה (בדוק שה-Edge Function פרוס ו-Verify JWT כבוי).'; }
+        else{
+          const mine=(r.log||[]).find(x=>x.project===p.name) || (r.log||[])[0] || null;
+          diag.textContent = JSON.stringify(mine || r, null, 2);
+          if(mine && mine.status==='updated'){ toast('הקובץ עודכן: '+mine.to+' ✅'); setTimeout(()=>location.reload(), 1200); }
+          else if(mine && mine.status==='unchanged') toast('אין קובץ חדש (אותה גרסה).');
+          else if(mine && mine.status==='no-dlj-in-folder') toast('לא נמצא ‎.dlj‎ בתיקייה הזו — ראה פירוט.', 6000);
+          else if(mine && mine.status==='error') toast('שגיאה — ראה פירוט.', 6000);
+        }
+      }catch(e){ diag.style.display='block'; diag.textContent='נכשל: '+e.message; }
+      sync.disabled=false; sync.textContent=t0;
+    };
+    row2.appendChild(sync); host.appendChild(row2); host.appendChild(diag);
   } else {
     const b=el('button','btn','🔗 חבר Dropbox ובחר תיקייה'); b.onclick=()=>openDbxPicker(host, p); host.appendChild(b);
   }
