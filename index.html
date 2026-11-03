@@ -54,11 +54,15 @@ button{cursor:pointer}
 svg{display:block}
 
 .app{max-width:620px;margin:0 auto;min-height:100%;display:flex;flex-direction:column}
-/* End-user app: header scrolls away with the content so it never covers the climate card / controls. */
-body.role-user header.top{position:static}
-header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);
-  padding-block:11px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));
+/* Technician/default header: FIXED to the very top. position:sticky breaks on iOS WebKit when <body>
+   is the scroll container (the bar drifts toward the middle of the screen), so pin it with position:fixed. */
+header.top{position:fixed;top:0;left:0;right:0;margin-inline:auto;max-width:620px;z-index:30;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);
+  padding-top:calc(11px + env(safe-area-inset-top,0px));padding-bottom:11px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));
   display:flex;align-items:center;gap:11px}
+/* Reserve space so content starts below the fixed header (technician view only). */
+body:not(.role-user) main{padding-top:calc(66px + env(safe-area-inset-top,0px))}
+/* End-user app: header scrolls away with the content so it never covers the climate card / controls. */
+body.role-user header.top{position:static;z-index:20;padding-top:11px}
 .top .back{border:1px solid var(--line);background:var(--surface-2);border-radius:50%;width:38px;height:38px;display:grid;place-items:center;flex:none}
 .top .titles{flex:1;min-width:0}
 .top h1{font-size:20px;font-weight:700;letter-spacing:-.01em;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -273,6 +277,12 @@ details.dev>summary::-webkit-details-marker{display:none}
 .room-tile.on{border-color:color-mix(in srgb,var(--accent) 60%,var(--line));box-shadow:0 10px 26px -14px var(--accent)}
 .room-tile.on .rt-ic{color:var(--accent)}
 .room-tile.on::after{content:"";position:absolute;inset:0;background:radial-gradient(130% 80% at 82% 6%,color-mix(in srgb,var(--accent) 15%,transparent),transparent 68%);pointer-events:none}
+/* subtle brand watermark — user app only. Painted as a fixed, centered BACKGROUND layer on
+   <body> (over the gradient): always behind content, no pseudo-element and no z-index, so the
+   fixed tab bar and toast are never affected, and background-position:center stays centered on
+   iOS WebKit. The PNG is pre-baked at low alpha for the faint look. */
+body.role-user{background:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsCAYAAAB5fY51AAAwsklEQVR4nO2d6XbjRhJmLxeRlKit7LbLM48+f+cN5qFm7O52lSSKorjPj2A4IRJIJEDsiHuOjpdSURSRGRnxZSyD//W//w+Gccb/BG5rfg8r4P/W/B6MhjGu+w0YlTA5fYUwAEYlvpdQRsADcAz8/s3py+gwZrD6wRPwWPebyMgE+D3D978B/ynpvRgNwQxWd5iSbJTuqnwjNXEH/JbwZ2/AusL3YpSEGaz2kfTM5rTPiyqSMcm///70FceunLdjlIEZrHZxg3gRw5g/a4Lu1FQeiPcyD0gYua327Rh5MYPVXIbADBHBlQnV395tqU7MniBGuWjGJK/1e77+fkfgEzFmRsMwg9VcVHSO86aqZAn8XdHP+hV4ruhnKd/O/vsA/IkYLaNhmMFqBmPkJi/KDeWEeVtEhA5NF6hy474TrikNEM3qWo9scPbfI8RonoeJr5jeVTtmsOrh3BDdUZxnccBvjD6Al4J+VtGsyXabN0ZCuiQG5PNQ5zH/b4t4m1GShHyjJMxgVc8MCX2iFOlJvXK5saJ0aZO9AAvPn8+5DPny8oyI91H+xkLHSjGDVQ03uNDlDjFaRbDm0gAt6U/O0Y70MG2a8P8nZFv/0Weo3OM8uC1221g6ZrCq4Ql3Op9rJtfwwqU3FapN9YE1IqDH8SuXumFWHnHPdQH898rXM1Iwg1UOKghrqHdH/tu+T0R3OueIFAibgfKT9Pm8c+mdZvV+B7gD6A745fTve7JdbBiBmMEqFjVKE0Q7yatNRXOA3hFdyiiWTy71pwOXReJRo+TjBqeX7RHvTvO7LKerIMxgFcctbsEOuU5I/4Fb7KaLVMeSyyTZBy7F9jRGwL9whuon4g0bV2IG6zqiuVL35MtCX/P1BD4gG8dyfqonTsQf4PbJkGQR/5zo921x4eEeO4RyYwbrOr7hatTyaFQH5Gr8/FbPQojmsMKFjlPgD7I/6wdcbtcH8O9i3lr/MIOVjSGy+FTXuCV76KcJiEfEMH1i4myTOeKezycS3g2R5z8nLNM+2hRRpQN93QV2QAVjBisMFV016TNrakLUIK2orjbPKJYjX6sEhlzuobS1McbdJh6RA2wV+W/DgxmsdKJ9pkbky6N6w6UmmDbVHeKqCr4RnhoxQIyXple8xbyeEcEMVjID5Ir7nmwdO7dcuvjvWAlHF4nrI3+DO9SGpIeMUXH+gBxoG8zbisUMVjIT4DvZP6MXLk9J0yj6wwI5oEC886S2zXHMEQP2F/0pr8qEGayvTHHufNZmciqmr+hWgbGRjejhtEIOsCzi/A0iQajn9okZr38wg/WVB/LXl1XZ6M5oB1vcmnjO8PeivelfMYP1D2awhAmyoLImfr7gFpPNxDOSWODWyZRsxmuOaGEv2BrrtcEa8bU4OaT8Qq+hQVz/BbaIjHSi4vwGkR00+TQq0scxRtZmdJ35pgB1mj4brGhrkNDM5S2SpayLpZeLxriKLSKqgxyYvxM2lfsZFyoukATW3tFHgzVGQr9QIXSDS0nYYHqCcR1HXC7eDsm9UoM1I9l4RSOC+envruhZXl8fDdYt2Uagv9PT08yohGjroG+4LHgfU2QN/xt/i+jO0SeDNUAWRKiwvkWETmsLYlSFNhV8Jsz7f8St5xU9MF5dN1jR1iCa3xJSrKzu9ltJ78sw4tC+8NHsd19vtRkub3CMSBc7Opwl33WDdYubUBOtmPdxxKahGPXyExcqPhCWBjFDWt/8TXxL7U7QVYOlrV8eCLuB2eNCvz3ywK2cxqiLqJC+xF0U+Q5crX3Vm+9O9vvvqsG6QVrUhpbWfCICZucesNF6tDTnO/EDXs+5R0LKP+lgjmDeSS5N5gER10ON1QvifpuxMprKEVmjL4HfrwMxsvaibzxd8rBUYH8krB/RATmBXulZLovRSlaIIK+5WmnOxj0dFOK75GHdIW5z6JCAN+A/mLEy2sMOWbOht9dTZE9k6efWaLrgYQ2QU0djdx8rnJgeN9LJMJrOBlm7KnkMSc4tHCB74j7y/3a0uFqjCwZrgmT9pv0uW2SUuBYvd8JFNnrJJ64e8QZJZ/BptnO+Tu35s7y3Vi5tNVgz3AMYk/57LDGPyugWeuBukLytqFE6J9oNYobcoLeybXcbDdYQcXFDGu3pKK3oEAjD6BoLJH9Q29b42tWMcHtnQ8vyDdsmut8Qno8Coln9SQtPEsPIyCey1kNrX+fIXsrSBrx22uRhTZHbjpAbjyMiLC4xY2X0Ax3Ku0QckSnpjQHHSLTyQUuE+LZ4WDq/7Vvg9+v1b+er1w3jjAXZ0nW0pU2eeZuV0waDdYt8oDPCPtQlrv+13QQafeOIrP0XwoayalqQ7rFG04aQ8I6wanUV2F+xHlaG8YbLjE8T4ofIHhsgoWFjD/o2eFihH94KG0BpGFHWyJ7IKsSHVotUTpM9LG2XkfYe1QV+xzwrw4hyQPbEGElnmBAmxEfHkjWKJhssrYNKa7qnk2y2Kd9nGH3lHdeiJq0/nEorjaSpIeE90nVhjP9EWCKalQnshpGMRiGvhAnxD3ytP2wMTfSwtJdP2kmwR25CLM/KMMJ4ww1yTYpcBojBmiJeWaMil6Z5WA+EdQpdImGg1QYaRjY2yN5J87S0a2+jmgA2xcMaIB/QHH8mu46KX2K1gYaRhwOyd0bInrshXnYZIHtRq0a2NEB2aYrBmgG/kf5+9HRolJtqGC1Ehfjf8acx3CHyzH9owC183SGhdl54INnSK0tcDF67pTeMlqNC/Bv+8FCjnwfCmw6URt0e1ggT2A2jTkKEeHBC/IYaI5y6PawD6fWBS8QdbWQim2F0gDWyx0KF+MfS31ECdXpYmnmbxAHxrN4Jyx0xDCMfR2SPRatLfEK8NsWsnDoN1uPpK8kNXSM92G2qjWFUwwcS8v2Gv3NDbZnwdYSEY5yA58tkV1GwsWUChtExdFbnAjFeSZdbE2QPV+7w1GGwbkm/SgX5sFrRVMwwOsYb8AORZOKYIXs4abxYaVRpIbX5fcgv+YLfwhuGUS5H0h2aR0SIfyXZuBVK1QbLp1mBjY83jCaxQcK/JMM1QwzWOxUZrCpDwgPpetQbksluxsow6kXbNqXdBobs68KoymDpuOykn7fDDTu1shvDqJ9o3e6SZA9Kq1Uq6VJalcF6An4lORzU0duWyW4YzUL3ZlId4QjZ2yGDja+mbIOlY7HThPYBJrAbRlM5IqHhC8me1i2y10udvFO2wZoiltcn7u8xzcowms4KuQxL0qvGyF4vNTQs+5YwzWs6INnsVidoGM1nQLqTU2qkVJaHNUBcRJ+11Uk3H5jQbhhtQGsOfZ1+p8jeLyXpuyyDdYPUI/naq74i3pWV3hhGO9ghe9aX6vCA7P20Nue5KCMkfEAsbNobPlKd0D7nuthaRcdKkuOM3jIlf5O8NdV0NTkiUdEP4veVNvx7RnSvRZE/vGiDNUByMtL6sldlrAa4KSDXdEvUQmxfi9gqDbDRLnQdpnGPbPQ8LJH1WcU63AI/EfuR5Ag8ICkP70W+n6INVsiH9Yn8slVMvLlFFsC1NxcD4Bf8HtaCgk8TozNoG/A0rgmjboE/cHW4VZBmhAs3nkUarDFSd5SUHKrTN/QkqIIbiqsoD5mY60vPOGC3oV1mSPIo+HvK72wwPP2MKptdbhAHZEr87z1Coq0NBaUuFWmw5ogXkmR1t4hgV+UswSpDtFv8SXMbJGPYcs66yS0iNid16qyKKtf8K+J8/E78gT4FviN612sRP7BIg5WWozFANmtXdZ40nWKKhKfRsHKPhJFd/Uy6huqhcVHENOH/dxmNKpLW/YBw/S6IogxW2ps6IpuziQ35zuPsQj/gs9c9r7faI57XeahoBqwZnK+DKRJFVGWYqlqb1zBA1rGve7C+76vXdREGa4KM6vIJ2y+IENi0tIAj8DdfE1e1mLOKRak/K5qLtj+9p6Z9Vn0jbh0Mqc5Yxa2Dm9N7apLR0vc5J/mG8wGxE1dfthVhsLS9hI9PmteJYYe8pwWXyasznAGOngo63rtI4nSvTy69LhsgWx46LSbKlLCbvWvZ8tUoqTFac3nrPETWy4z6Z4oqR2S9HnEN/c6N+g2uM+lVFPFLa7jnO3nqnn8YxyvxxgrkxIg7xW4REbFsfjn77z3STM1uGcthggjHdWhQP4i/NY87nLT29gHxtJrEGvgTWbtxcwv3NCAknCObOMkgrZGHUeXNYCg7ksOupHKhFeLWRn/fEekeZlbON462l45+jlrXZaFjNkbIuo0eSBPS01aK4LyV8AFZU1meYZO7m/iM0hA3aSd36sU1BmtI+lCJT8RbaSJ5vL49ciJGmfJ1zHdZ+sL5qaWerQ2ZzYb2aKtKB9INvEe03CK85CZGLIpeFJx/vnrpNEGMdK4a4msMVsgPbJI4WBYbZMy33oR8o5rTeoCInOrdLZET3LjkHlea5bvNKpoN4pHrJm5ipFE0C0SXeyZZ783d8CCvwVLxOcnSaz/oPrSN0WJQJWqshpQrjkYF+wGXG2JP/0LGEZchddRglc0OtyH7eIhskH0fp2OBuzg4v2wIIu9m0iLNJJFSJ270wWCd84Jrv/HApYBeFlpLBs6DWHAZwnadJ9ztnoZjVYrpb7jbvb62ThqS7MVOkIurF3LcGl7jYfn+rrq/fbyGj449+sB9TkMuxd4iGXLp8d7hBNou611znFG6o54r/x3yvD9oriheFUfEaN9y2bllgDyfXIdImQ92SP/CkXPWiL4FEkJXdRulTJH6NnAhetd0lAlyxV9Kw7gMrHDPuu8cEA9qQ8HdR7MarAnicicV+Wqjuw/66w4nsUVuTENbjSgLRAcZ4uoR83CDhKf6XN5oXjJvKDOcRjKkPmMV/Qy7dhAURZKxUq/4lQyfXVaDNSZZTFOqbB/TNj4Qoz5FPsuQ6+k9sim0PU00hSLrjVdUeI4K8gea7w2PcJ/XnPxZ6OdtgI5kvxw5nF7jHVvrPrSlVNwFnUYbaT3iv5DVYB2Iz7FQmlic2TQ+kYzgXwm7uXpAjJReYvz79P+HSLiXtznhA05fWCEZ1E3mGy7n7xoRXdNQ1NM84FrDhOY3rRBvue9aVRo6hPWZeEcns8YdarAGyKbxtT7WZl72EP1oysc7btPckBxm6zX9I3IaRcO4BV9PJ51WFLKho9f/2jZF84XUE6yTAbLeBpF/zxr67XFtg5U1X5M3J4R7qvrZvNPPG/Cs6FpPsglHMkpHoQZriOgfvgZ1HzQ3q72JvONydObIVa9v0zwj3tSfuIccdy38neylQjdILR3IJv+T+vUtvTC4xptaISd8EkPCJpMrG8QTtUM5G751nSkiyxISWqhXHp+4olbfoTBFNtiS5BQF7QIJshGzGq8RXxsNVqnTRN9vXAJoCNH369NG5mSbprRAPnMzVtlJCrW1WmOKrNtUrz7UYPmayWtNW9NF2yazR26cVPxNei5aQHog2WBFW/nsuDSAA9INwbm2dh7+RHPN8hKXN3ZP+qVOHNGi2wVhQxhuCRPuVaRv861q3exOXyO+Oj4a6o+R55ZqQ7IYrCQ2SCho17rXs0D0lbRBlKHGQgX+KHdky76P80Le8A/TDCHOOOXJC9wjIrp6PqHaUuhnuETqAU2zyo+u61+J92iDD8CQBTLB369aW2QY16Mi8Tv+oRYTxPBoukMScZN6jrjpLirS+8L9pNq8az3qe7LfcB65FNG3ZLsk0Fq2kClIKzJeuxuxxF1+RNEWTWtSPusQg/WAJIv6FvUQSxQtkh+IQfpOfPyvfcj+JPthscGlRoyA/0H27Pu0CUEh5NFEt4g3FTWWWW8zdZJLWgqDpj+YZlUMvs/7BokqXkm5uAsxWGm5VU3uzdNmDvg/2yGuhUfW8Ew3+Q43wRfEEIYaoqouYT5xep1qIXlQ/e+O9DVrAnvxHHFZ7Q/E98tKXVMhBst3gmnGr1EOW/w5Qpqb9Hn63jy5U+ftT1Q7SxvbViaaoAxiOF4KeM0Bopn5vEkV2F+xdtRFc8Tlr90Tv6YLuSVMepEDrh+1hYPFo4NXn/GnJoyRHKoF1zf5X+BuwjSFog5+4AxGUWJ31AgmocbRNKvySBsH6MVnsEakdxf4xB5uWahg/o48iynxHs/g9GdFeATR9BRNidDeRkk/vwj0d9XM56LDsRv87z/6WZtnVS6+0G+C6KMbEi51fAZripzcaTqKUS5LZBN9x68vFV1Ks+Nr3eIfKT//GtSbVE+96N9FL46S1qteRJi8US93uLrZ2Fy6NGN0nugV+neNYlFd5Y3kzTyj+H7ymjCswzdeKTb8P5xe8wcu+bNIY6VDfufEr1dth/SKGauq2JI82kyTmhNtS1rX0KTODLqI6y6Q7RMqWEa7a0aZnr7KaNI3xA3LLHKkmQqxa8pJjZngT5I9IAbLwsDq2OEuUeJqOL2Hls9g+RbPO/KgTb+qlpCbu6IPkTkSTmnfqCI96yGS/XxAfrdXim3jnPZZ+HqPG/WRaHuSDNYEv16xxuqq6uCAxPbaADCOCXKKXdNTf8LXZnmh3Qyyom2LlOhw2wP5D0QdPe8Lj3fIOrYb7nrwHRQzZB1cPP+4RT9CrrOnnhc1/aoeVBx+RrSZOJ4R8fIv8usy0VZCVT7re1zPtbg6yFB0DfsM1gIJTcxg1YOvCegzckj+xdltYZzB0qkWvoVqbnR96LX/APF+zoukteNDFu9Ka7k05Iy2Ya6SaCeJGa4HvWpdofWLR5LX8BbXnseMVX2skOcT15hR1/CFnUkKK3wPMnOXQKNwtGvmDfFdHQ7Ixk/b4LogdHx7Fq7RykIOvBFfvUgdoxXyHkYkr1HtLmLUy+r09T9IXsMXZG3nsUbcaLtVaQZJXvAYMUB6ORLHPe7GL+s6WJG/XOaWfJN/vnHZv+oHlzrHI/J7+XqKGS0l7qH6Tk6dFGLUzwA5OEbICRX1WoY4oTzpcAkd377nUgt7J6xJXtLrzbh8v2n92jVtI8qaS2/tnuTr8m3k71hKTv2kedoXzyirwdK0envY9XNEOi2skIqEOM1phhtff06oRrXkctz9Nc9/TXxTwd9jvjeNZy6bAPr6tv2Nyyczmk+qwZoRPnXFqJ9oDV4ceoGSlWgt35Li21+fv56GmHog3hMWumXJC9MZeaa/NoskL2uE5P+tiKRQnS/mB/L11DbqI49B8rFHjEeVeXY7nBCuRtY3Ui4vY2z2QNNIOmzHyC3xl17654s9LaY0wbJZPCEbuyiPeInrv10XGuouTv8dqrWlMUI2wAfXt+ExikGf9ScS3id1I/mHc4OVJrhbKU4zUJH6gfyTn5Vo4793ii2Nycu5dxdtKph1mKqiE1pGuIaHFh7Wj84leCS5QP0fQsOJPTI3zwTLZqCTb64NB498nXjUxHDpA+fxTUgfOJuGvsYP7Ma7KQS1R4ZsY762NHNBdx2dWhQlLsM9lD0uJUGnmTTZ04iOgNoj4ZyGwHnCYfXS4tr0pk5tMeol1GAFW0CjcOZkmyOYxgrXmK9taGqC8p387W508nOUuERUo0Fk0bCM8rnjchMV1eVTvZMuzZDUKSxPFHPxEJchvyR/kqwRhq9tUqyGpUWnln9VHUmj2kPGp+fhgNy8damz5ify+zxQzNqNa0kz4NLrCp5UbASh+YTRtkbKCJeOclSDpcWvRef0GMk8cmmcyv78uxjWl/07zbnUELU1jVEMW0SmeOSyzvQOMWT/BVa6QXRCThKmYV3HlEuRfM71/dfVw4gyI9nwdfEZ+n6nHZcpEmOyhdlDLp/TnMvPXesUjezopV7cSDf9/EeQ7ZbQyM8jroJAP8trjccROeWjeVMDpCavyL7rbeYTObmj63fO9akRM5zXpa/zhoy2N/JTyORnbXZW1EDLrjIlWX+Klpnk3SjnPfSPXHoPRU+daTtxn8cnEl5En8OE7CVp58/xjuSeYkVXD/RWPwsxWB+4Mok+kzawQIc1FIU2StR/hk536WLYl5e4z2LPZY+wKW5obPTvZhHyxyQ//wP+y44sTTFVhO4lIb94VzdA1lMq2uc8jqJvWLeIJ6Dv0/KDykN75UeZAr8V9PoP+Iu51etLY4S8p2vLsVpLby01YnxCjdYQ8aDK+rwOuLInPSA+6VbOVB2EHrbaeibKjq+97c89sCyM8a8drW9MW483iOHrqhORSp8NVlQID6HMRfKJTAgx/alYrvk89zgRfYAI9WW0vAHZh6ENDHtrrKDfBquuB7/msuh2Q4+F1CuJ+9z2XNfGWTlG/hlXJfBI/prOc3ptiELps8Gqiw2WdFgU2uzvfLMfkM+4yKz+Dy4N4BjRp6xPXEV03WA18dSysK84nhFtMe7Co4pn/wMxYr/RnL3UxDUfSnAeVlc30RZx46c05xS8wU11iculMsKJJnCeU9bGjU78OZT4c7Ki9XhtzpfU/fpPZnuEIzTnVCiLD8Qg/E4xbXaLIDrJZodMkGnzIquTqnW/G+K9qSYchto2qM1aqO7X30jYr2NkQOW1NW1NRpMuNY9pSnm3PSFE6zInSFgT1Vq0q0IZC6/Ni7lqhlzqU2OatVei3VhD0iKazpFTV4aYP7sHJjqZoutEBdM5xfWYgusLw89TKw6IcY0ru7kWHV/fVQngGs6f4RTZG0V6T0WXTr3RjB78RRO3n+6h+yFhHCsk56koJsCvBb7e8PR60XbU2mnzmlsvHV+/xG4pzxkjn3nUOI0oPtQruqNp7/TPPhqsA8V2kFzzNSM6jrjGZD7ihOQ1l3lAG8JP7AEuu/8lw3vpKtGavFuK63CxI/5g2SOhvs1FuII+Gqyi2SNipy8sTBQRM/CNr83NDqefm/WUbbvOURQPuM+zyJu+V+KbBWQpcDYS6HPxc5GkLcQFlzeBWSffxLWOfcR5Y5+EjWLvi34V/Rzi0h+S8rdC2JKsHX1gXlRppBks669UDNpT7JzzdiRZD4cHXA+uF8L0Eb0k6PpzjRr4B7L3u4py/lkt+Tq9x6gIn8H6RNxba/taDgsuw7knXFJpVtRjS7t2nyGFvG90dxrMCLlgUC/rmnYsKy5H21veXE34DNYOm4xbJhsuPaK4m6kxYaHLDWEhprY66XLrmiH5DP+eS8H8nW6mDrQSE92bRVyHgW9cF84k0fWQMA9L4OfZ/zOhvEH4DJaJ7dUTN+8u6uWOKS5L/xaX4tHWTVmE0f3AeVXvdGtuY+cwD6v5rHDhm952FTXl+Bb4f7RXp7z2UN0jHlXvEjDbihmsdrFGumDqQIxnrm8g10bvaoaEyXlKrLbIjarmRbXVWPcSM1jt4shXAXiCCxGH5PO8JsjGbUvu0Bi5EU0aqeZjh4SA51NzjJZgBqvd/MRduceN+U5Dr/+XhE1tqRvtfZ6nY8IRyZ3q8u1o5zGD1W72OM/oHTFAt2R7rirkPyKbuWk5Rje40C/a/DALWofZ5gsGg2Y0HjOKYU2+2kJwjema0uQwyhzxqn5HUjzysEC8KzNWLcc8rO5xzc3ZPeKlvVC/pjVCQty8mf8gRvwNCwM7g89gWWJhO9khxiaPAD89fWkIVbXRGuK8/hnZNblzNpjA3inMw+oeL4ix+Rf5n+8viN5TtRA/xxWEFyFXmOTRMXwLeoyECG2fxNE3dlzfZeMGMR5rRBMr+/kPEY/qnusKlRWdRmShYMfwnUAzROisc2CDkY8iMuHHiBBfVCdOH1OKXWs7xDs877JgtJy0kOHaAQtG81gjKRBHxLA9kXxwDRBPa4Bs/jI0rUfEUIUY2UPkfQzwe2R2I9hBQjQOE9+7xQbX032AbPgZyUZLhfgtrpPEgevXxQAJPZ8ISwQ9IGHez8jPnpBssEy/6iAmuvePqMes2d9z0se9RdvcLLj+9k27gIbWQr4gGflRQ2nef88YI6fmiGLETqN96OSdKU4CiI5jV6INAg+IxxXSQ/6c4elnzfGvORXO9QLhHbv86QuJ3vsYGZV+j4ieRj/Z4mY1joA/8BuTu9Of/5vsbZb1MidNs9qcXl91M5MmDMa48dBGv1GDsEPCrzv8HRF0ao/W+X2SbrxCBfYFXxvrGf1ghjsMY1ENywRKI4qGXzNkjSRpRXNc/aFvqIUK7M/4NasjYqRs+Ek/mZFcL3oEjia6G0loSPZEWC6WL2TTcWRp622JGKsix7kb3eAFWJnBMpJQ0VtHuk/we+JjXHh4RDwkTZu4x98d9IAYqXesXXGf8R16n5jBMgL4QIzPd/xG5y7y5xukV/wUEfDTJIcNIvqblmokMQDLwzLSiepKO5LDwwFOTFctImSmos79M4Hd8GEGy8jEO+IJTfEL8Zz+LK3ZnhrCn5hmZQRit4NGFrbI1J4iJoK/n17LkkGNYMzDMrJwRFq2DBER/obsh55myS+x9i9GRqz42ciDCvG/k72FsfaeN4HdyEyIwbpDjNYHtsgMISrEbxEhPs3TOiBhoGWwG0mkOkdqsLTANE5InSO3PlvMYBlfWSLr4o4wg2VJoYaPVHlBv0Hd9CRNwdp4GHE8Im1pQprvjU7f+5j2jUbv0DFzqRUV6mHtEHd9RrwmcW2PcKObzAlva6zdS0e4OQHWFdQAWRMPxDtGB9wkqAsXzDwpIwt5DM4UyZpv4tBWoz6S1tIHUjXxCZbWYORDR8aHdguNop0bLAfQUHzR257IJY0ZLCMPd8jcQ8Momy9RX6jBMg3LAPGKvnHd+HhF2838xLQsI5BQg6Vu/B5LbegrI8RQPeHXOvc4AzQk+QZximTLr5HbaVtXRirnBitpIY6QEEDHl5u31S8GSErCHekXM69IfhakT+MZAL9i66rvBEdw5wZL68RuuRRFtYmb0T+OiIft88h3yPpZ8jU5VAX6pL87Pn2PGat+oqlUvmG+/3D+TQvkpEuqoDetoZ8MSDcoH0jycdRYaZvltOEUSVUWRrfRNkS/kGywvqy7uFPPjJIRZYYI5Ene9Q4ZQOHrvLA4fd8j8WtugkgOC6xFct9IOqhi11Xc4rH8GEMZIeUSvnKaPaJb+Q66T8TbmhO/5sann3HEalb7RpLnHruusuZhWXpDf5gigniabjkkLJwbkH4Y3p9+3t/YmK8+kGZPLtZVkNAVYYwsqjwZzka7GCBiqK+weY3oUyGHmLYo8hkiTZ0wPav73CC2xOc0BRusJKZI0zarA+sHaXrmC+INheieh9P3vlz5M41uMEdsSeKU5zjiDNYeWVSLhL8T4tob7WWA6Em+BNFP5DZ5RTaJQFss/5dkcX1w+tmPnp9vtJ80KSHWxsT9zyNirN5JXoymY3UXNVj3+A3WK/nEcRVTfQZLhX4zWN3FZ0O0pczF9+Qtfja3vbscSH++RRiStNcIeR9G9zgiEd6SmAPRF9r5FtQUyc+x0LBb3OCa7MVxwKUoXMvm9FpJJ+3o9F7sgqebpI2lj11jeQ3OPdKEzUp1usU9IoQmPdctkrmepG9mYXF6raSqisnpvaS2zTU6R6JdSvOwkrysAenTf432EXKhEqst5ECTRF8Q4xX3mqE5XkZ7GAPPJLfW9tkdr4Z1QGLIpEVj+kK38C4UxKAckPVQZCa6lu3ME36+vi+76OkGN0jtYNyz1jWWaFt8BmsN/IVcMSflXZnR6gY3SFa7LyfmJ+XOpkzy7FTH+ollv3cBn834IGUUnM/93yM5Mz6BdYbpWG1nguhESXV+O2QhvVOewTiQPGA17SLAaA8TxGYkecsbUpo5hojuSWHCEHHtfK0hjGYzQjyrZ8/3vCOedpI4XgTqzb8n/LnVsLafEHuRqldeY7D074+xxdRWjsjz862DqvKhDvjX0T3+ZFaj+aSttUIMVtrpdgx8HaN5DEk/bKo0EElrTbPvn7G11mZ8B1+QFx2S6b5AYstvxCfx3SD5MlrOYzQbXRT3SGO+tMTMKg3WOxJ6fiNZG7WLnnbie25bAi9VQk6rDbKQkoSwEZJTMQt4LaN+1GBNkeeWtAYOyLMvU7s6Z4t/rYW0vDGah7YNSlpre+S5p1ZQhNYSDj0/TLGTr12kPa8N8B/ib+7KxJcsegP8hlx9v2DaaVt4QNKjfAdNUK5dqB5wQEI+X7M2WzztYILoQSEe8YbqD6IjctouuVxTWmExjHyv0XxG+Ctj0pKW/yHL5OcXJMacJby4iaHtYEaYsdLLlDoM1ituraWdykb7CT548vR0T0L1EG+mqtF4DsgzXFFvmO9ba5rkarpps5kgoWDSc9LD6YPAtZbVYPn0hcnp63yQptE+ltRfBuMLE3StGc1GpyH5WJJhtFueMC6tQNZ0hXYTrCeUTFPeh5GfkKk4mWxQVoOlww19HtQcCQ9tsbWPNfJ8mzAXUNda3Z6ekZ0BYgN8w2o2yPPNdAud1WDpVfcy4c91gIDVF7aTd2RARJW5V0lskfdiycjtQ+sGfYNMlogtySQflWlULC+rfTQxnDdPvX2UtvfzGqw9/s6TA0QUNS+rXTTxeaWtNaNZDJG9n3TQHJHnmUt2yLtAteVIkjun9YVpNwSGkcYS+JMMN0lGrTwiez+pRnWDv5WQl7xjvvanryTXTz0sm3jSDvYUNw2naNLWmtEsbvCnnOjkpVzkNVgQ3prGaD5rZIJNU42C6VjtIWTP566guEaz0IzoV5Lf5AzpaGlJfs1Gm/8bRl4myF5Py2p/5Yq1do2HBaIv7JDeSnE1X9PT15pmhhuG0IbJNOZlNZsJ/lbb2kDhqry6Im6FBqT3J7LTu9m0wRi04T32mbQ9PqKAZ1iEwTrgOkUmEdohwKiWIyKArup+IwGs8I+2N+phQPr+1saMVzsuRRisDenjy5+R+NY6RTaLPfA3zW+Gp+2N/qYZZUOGI2Ty0gKxEVfLQkUlCoYUOU6RdH1ffZFRPXuabayUI2asmsiR9HCvsKYIRWY2602TL/v9ETNYTaOJ2e1JtOm99gHtAOvrQpw2vi0T194SRlniJp744tk2nOZGczFZoTk8IhkCSQnia2QaTmEZAkWeWDrSPM1tH2OTT5pC227eDriD0agPnYIzJ7llOogt+KDAQSZFu9ghTddugT9O/zTqpW0Ga4u0JHmr+430HN3DaTf/hTdhLDIkBDfxZI+M9oljgHWTbAIfSKpA1WO8ruWA5fXVTVqnUPWEVxQsARVtsMBls84IG+1jmlY9LGmvp2KHXX2EOBsHJA2l8OqWsm5d1HX35WY9Af8q8T0YhlEsQ2TPPqV8XyFZ7XGU4WGBeE0r/O1lJqefv0I8MhNSq8W8FCMLN0gu5T1+J2OH7OdSwvayvZu0TRFqsQ3DqJfQiGiBRFelOCBlG6w10k7CJ+zqGGvDMJrLGH8q0hbZ60tKrEgo21B8nr6GJN8agoSQJsAbRjMJ2ZtrZMpRqVQleL/iL1ydAd+xjg5V0mYNq83vvW2E7s1KnklVodgaMVaPxLuV49PX9vR9JsCXxwEJ0duWfxVlh1yZj7Fb5jK5QbLZ0+p/t1S0Z6vUjoakL65HxJL/Rbs3VJP5RFz3Nn++S+QQ/BcyYdgonjEy/SatvfkBWU+VTOiu8nTaI4mKvokZQ8RgPWGlO2WhHmyb9cIjzhs3iucW2YMz/DbiE5F7VlT0LKr0sPbAD0R8T4uHnxF31DpMFk+X9J8u/S5NYYAYq5A2UG/4k8MLp474f4V0H0ybTTYDfsNcfsOoEr2x9/GJ7OHKW2vXYbB2iFVOqzMaId7YtPR3ZBgGpI+ZVzbIHq5cB60zYTPUWFplvmFUwx3SxjytV11tN7N1XgmvkBYnaRrVDImnTa8wjHIYIHtMu4cm2YUjri1RLdRpsN6Q69C0/I17RMuy0NAwymGK7LGQfKv/UmNborqT7rbIzWHaTcMIuTl8LPsNdQS77jdCeUT2VloYuED2aq1J3U0oOl4iOlVaw7/56c8/aX8eUZmECqdGvxkg4d8j/ujlgByACxowcLduD0v5BP5E4mMfE6Su6b70d9RefkEylJMOoy4Z+i79LlVzj+yltEz2D2RvpqUhVUITPCyQhbdBvC0dfR1nTAfIBzxHrP4ndot4zv70ldT1UevDQD67NibnjhGvwNcg0ohHq0nmpBsrkLVUeKvjvDTFw1JCm3/NCatz6iM/kc8wKUdGq++/I0JrGzf9HdbdIy8TZO+EDjRulLTQFA8ryoGwD0mF+A/aO0yhLNJEd/18b5DBt20rhPbNwjOSeUSMfchM0AOuTrAxNNFgDZANFNI6ZI6rOTQh3pHFczY9sPuowP5EWFSiUsFPGranmhYSgngHfyNjgkK4QVxc23iGEc89skdCw/8XZA82ylhBMz0scCLf9PTle58D3DSPUid2tIw+h0x9/t2jDHF7IyTxWvfPkgYJ7VGa6GEpG6SR3zLw+28RIdYy4g1DmCJ7IrS33BLZc400VtBcD0s5Au+nfz7iN7ADREx8QlzfPgvxO8St18/rnu7fqG6QtQKuDXSfySqwvyEGq3FhYJSmGywQ8W+NbLhb0t19zS/psxCvNzzKkHY862v4QETivqMC+zNhmtUR2Ss/aMFeacsiPiIfqLa/SGOM5Bgt6LenpbyRXkXQdvruUSkPp6/Qvf2TsK4pjaAtBgucmD7DjblPQrPlD0iosKHfQnxlU02M2tAa0jlhCbU6eeidFq2NJovucWzJLsT/gWVEG91nhqz1rAJ7a4wVtMvDUg44cfUev6ioQvwjTnRe07DsXcO4kgfEswoR2PfI/nmnhVFHGw0WiEj4ibz/O8KEeK2deqedBb+GEeW8vCqLwF76SPmyaKvBUn4iHlOIEK9ovtYLDWmZYRgZmSG3gCCyTmgGuwrsraXtBmuNuLgzJEkuxCUeId7WFifKG0ZbUGE9tNsCyB5ZU9OkmyJpm+gexw6ZkZZ1oOMjkvrQdqNt9AdN18naKnyB7JFWGyvozmZVIVHj+hHpxdDayOyJmieBGEYAt4hem+XGe4/cBr7TkT7/XTFYIC7v+vTvE8I7Uj7jWtSYEG80kSzj46OskGaOnaFLBiuKjiN6IKztzAxpvwFyEv2ghVe+RqcY8nWoaahntcAJ663KsQqhqwZLBz6CeFs3+FMfoiGkXv1+0oGY32glY8RAPRLeKueIGKh3Wn4T6KMLoruPFdknfgyAX5HcFsOog2/IGszS10snT3Vai+2qh6XoqbNAQrxQDWCMiJyPp9dQj83CRKMMhrgE6AGy9rLszeXpq3Mh4DldN1jKAjmBNDwM4Qa5QgYxVJ0/vYza0FHxeSKeLdLOuPPGCvpjsMA9WF0UT4R3Jx0it4kTvvaZMoxreUK8qyzGao1bhwd6YqygXwYLvnZ5GCNie+hncHf63k9cTsseS4UwsqEF+XBZmB/CDlnHWROlO0HfDFaUN+Sk+p2wkh5wE3pATrb/YKU9RjZUahhG/juUPbLm1mnf2FX6bLD2uCGsumhmpDcGjJ6GD7jFo40CDeOcCW7dTMmWrb7D3XJv6XDKQgh9NljKj8i//wvRFEJ5jvz7C6KRGcY5D3xdK1lY0uJ2MEVjBusrC8Tzeib7jU20L5dOrTH6zQ2iUWUtqQGRHF7ouUd1jhmsr6yRsE4HuIIYrhDjFXX71Y3X25sDJs73hSHu4Lolm2d1wOX6rRGDZesmghmsS458TX94JqweMcoIEVZ1sf0XaxbYF3RqDWT30j9wnrkdcjGYwYonmtfyjmtFE7oAz8X5+8jf1WklRvuJm94UOhY+ygE50N7p8Q1gCGaw0lkii+g7+afvPOKari3oWMuPHvOE86aULPV/ygZZE1Zsn4IZrDBURNf0hzvCxynB10V8ixS2HnETms31bwfal0p1qpBJ5Ems+NoGxoxVAGawwolmyR9wId+AbFqFjhHX14k2Hoy+vtEMtCAZJNT7Rv4uJ1Fd6h2bSp4ZM1j5WOJ0qCmSv5WHIeJtRQ3UARHp7cRtBtGbvtAb4yR+4A6n3tT/FYkZrHzscfWEW0Tb0vKeKdkWdZxAu8IZRAsXqmPMZanMPdnC/yjqQYObO9CJ3up1YQbrerS+CyR0+B3RuK4hOmfxB9YhoirmXM64zKtRgdz8/RsXBlqofyVmsIohuhC1qBrE88pzOkc9tHviPbYjLjPfyE7cs8na5iWOFS7nTudmGgVhBqt4tPsjxOfkREXcEGYkp1Noq5EoduP4laTP+p5sdaNxaDfaKG9I6GeUgBmsclkBf539vzuu3yjKM5d5QFFht+9MuQzxlCw9qJJ447LWzz77EjGDVS7awibKAed1aUZ8Xp0kTrBP2zB7uifiJ32Gc67XE6MckcuQaGqClVxViBms6tHpJiCf/3eyNXFL4wn/KPN3utWuRMe3x32G1wjmcez4mpFu+lTFmMGqh2iL5Ve+PochyUJ7CGl/7w4JJUO1rk+qD3PmhK/NMeJpFm2cDohxj16o7LCQr1bMYNXPecrCEPEWzoX2ojbkDZKsGsoL1W7SEWJQ89Zt5uXcgK+Rrh2WitAgzGA1jwMinEf7zOvY8jqe15xiQ9YQihDEs7BDPvOocdpjxqpxmMFqJnFCblIvcPXIyuKm5Nevki3xRuiTnk6haRtmsNrDT+LDwiki3Bet4XQNbcwYF95a7lpLMIPVHpJupLT3t29Umc5U7DI7/P3P90henIV5Labri7gPqObl4zf8qQ5d4ANrjNh5zGD1g1fEuwhhgNzSVS18n7Mh2xAGazvdA8xg9YOsQ17Py33qYI8J4cYZ/x8iFwJbuLaASgAAAABJRU5ErkJggg==) center center/min(66vw,300px) no-repeat, var(--bg-grad);background-color:var(--bg);background-attachment:fixed,fixed}
+
 
 .ch-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .ch-tile{position:relative;display:flex;flex-direction:column;gap:7px;padding:12px 12px 14px;border-radius:16px;border:1px solid var(--line);background:var(--card);overflow:hidden;min-height:118px}
@@ -312,7 +322,7 @@ details.dev>summary::-webkit-details-marker{display:none}
 .cov-row{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:10px 12px;display:flex;align-items:center;gap:10px}
 .cov-row .cov-ic{color:var(--muted);flex:none;display:flex}
 .cov-row .cov-ic svg{width:22px;height:22px}
-.cov-nm{font-size:14px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cov-nm{font-size:14px;font-weight:600;flex:1;min-width:0;line-height:1.25;overflow-wrap:anywhere}
 .cov-btns{display:flex;direction:ltr;gap:6px;flex:none}
 .cov-b{display:flex;flex-direction:column;align-items:center;gap:2px;width:54px;padding:7px 2px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--fg);transition:transform .1s,border-color .15s,color .15s}
 .cov-b svg{width:19px;height:19px}
@@ -335,38 +345,105 @@ details.dev>summary::-webkit-details-marker{display:none}
 .ac-b:active{transform:scale(.96)}
 /* climate (A/C) card — compact, shown at the top beside the brightness ring */
 .clim-col{display:flex;flex-direction:column;gap:8px;width:100%}
-.climate{border:1px solid var(--line);border-radius:15px;background:var(--card);padding:9px 10px;display:flex;flex-direction:column;gap:7px}
-.climate.on{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent)}
+.climate{--cl:var(--accent);border:1px solid var(--line);border-radius:15px;background:var(--card);padding:9px 10px;display:flex;flex-direction:column;gap:7px}
+.climate.cool{--cl:#2f8dff}
+.climate.heat{--cl:#ff4d00}
+.climate.on{border-color:color-mix(in srgb,var(--cl) 60%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--cl) 24%,transparent);background:color-mix(in srgb,var(--cl) 10%,var(--card))}
 .cl-top{display:flex;align-items:center;gap:6px}
 .cl-nm{font-size:12.5px;font-weight:650;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cl-pw{flex:none;width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center}
 .cl-pw svg{width:16px;height:16px}
-.cl-pw[aria-pressed="true"]{border-color:var(--accent);color:#fff;background:var(--accent)}
+.climate.on .cl-pw,.cl-pw[aria-pressed="true"]{border-color:var(--cl);color:#fff;background:var(--cl)}
 .cl-set{display:flex;align-items:center;justify-content:center;gap:8px}
 .cl-step{flex:none;width:30px;height:30px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font-size:19px;font-weight:400;line-height:1;display:flex;align-items:center;justify-content:center}
-.cl-step:active{transform:scale(.94);border-color:var(--accent);color:var(--accent)}
+.cl-step:active{transform:scale(.94);border-color:var(--cl);color:var(--cl)}
 .cl-read{text-align:center;min-width:66px}
 .cl-big{font-size:30px;font-weight:300;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.climate.on .cl-big{color:var(--cl)}
 .cl-deg{font-size:17px;color:var(--muted)}
 .cl-room{font-size:11px;color:var(--muted);margin-top:1px}
 .cl-room b{color:var(--fg);font-weight:600}
 .cl-mode{display:flex;gap:6px}
 .cl-md{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px 2px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);font-size:11px;font-weight:600}
 .cl-md svg{width:16px;height:16px}
-.cl-md[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
+.cl-md[aria-pressed="true"]{border-color:var(--cl);color:var(--cl);background:color-mix(in srgb,var(--cl) 13%,var(--bg))}
 .cl-md:active{transform:scale(.96)}
 .cl-fan{display:flex;gap:5px}
 .cl-fb{flex:1;padding:6px 2px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:10.5px;font-weight:600}
-.cl-fb[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--bg))}
+.cl-fb[aria-pressed="true"]{border-color:var(--cl);color:var(--cl);background:color-mix(in srgb,var(--cl) 13%,var(--bg))}
 .cl-fb:active{transform:scale(.95)}
 /* "running A/C" indication at the top of the rooms list */
 .ac-active{display:flex;flex-direction:column;gap:8px}
-.ac-live{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid var(--accent-border);border-radius:14px;background:var(--accent-soft);color:var(--fg);text-align:start}
+.ac-live{--cl:var(--accent);display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid color-mix(in srgb,var(--cl) 55%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--cl) 12%,var(--card));color:var(--fg);text-align:start}
+.ac-live.cool{--cl:#2f8dff}
+.ac-live.heat{--cl:#ff4d00}
 .ac-live:active{transform:scale(.99)}
-.ac-live .al-ic{color:var(--accent);display:flex;flex:none}.ac-live .al-ic svg{width:22px;height:22px}
+.ac-live .al-ic{color:var(--cl);display:flex;flex:none}.ac-live .al-ic svg{width:22px;height:22px}
 .ac-live .al-nm{font-weight:650;font-size:14px}
 .ac-live .al-t{color:var(--muted);font-size:12.5px;margin-inline-start:auto;white-space:nowrap}
-.ac-live .al-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 9px 1px var(--glow)}
+.ac-live .al-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--cl);box-shadow:0 0 9px 1px color-mix(in srgb,var(--cl) 65%,transparent)}
+/* ── scenes (תרחישים) ── */
+.scenes-wrap{display:flex;flex-direction:column;gap:12px}
+.scenes-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.scenes-head h2{font-size:17px;margin:0 0 2px;font-weight:700}
+.scene-list{display:flex;flex-direction:column;gap:10px}
+.scene-card{display:flex;align-items:stretch;gap:8px}
+.scene-card.confirm{align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--card);gap:10px}
+.scene-run{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--fg);text-align:start}
+.scene-run:active{transform:scale(.99)}
+.scene-run.running{opacity:.6}
+.scene-run .sc-ic{flex:none;width:38px;height:38px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
+.scene-run .sc-ic svg{width:17px;height:17px;margin-inline-start:2px}
+.scene-run.running .sc-ic{background:var(--muted)}
+.sc-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sc-nm{font-weight:650;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-meta{color:var(--muted);font-size:12px}
+.scene-ops{display:flex;flex-direction:column;gap:6px;justify-content:center;flex:none}
+.iconbtn{width:40px;height:33px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);display:flex;align-items:center;justify-content:center}
+.iconbtn svg{width:16px;height:16px}
+.iconbtn:active{transform:scale(.95);border-color:var(--accent);color:var(--accent)}
+.btn.scbtn{padding:9px 15px;font-size:13px;border-radius:10px}
+.btn.danger{color:#fff;background:#e5564b;border-color:transparent}
+.scene-edit{gap:12px}
+.sc-sec{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:10px 14px}
+.sc-sec h3{margin:2px 0 6px;font-size:13px;color:var(--accent-text);font-weight:700}
+.sc-row{display:flex;align-items:center;gap:10px;padding:8px 0}
+.sc-row+.sc-row{border-top:1px solid var(--line)}
+.sc-rl{flex:1;min-width:0;font-size:14px;font-weight:550;overflow-wrap:anywhere}
+.tri{display:flex;flex:none;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tri button{min-width:48px;padding:8px 6px;border:0;background:var(--bg);color:var(--muted);font-size:12.5px;font-weight:600}
+.tri button+button{border-inline-start:1px solid var(--line)}
+.tri button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.sc-actions{display:flex;gap:10px;margin-top:2px}
+.sc-actions .btn{flex:1}
+.seg.typeSeg button,.seg.actSeg button{flex:1}
+.add-fields{display:flex;flex-direction:column;gap:10px;margin:10px 0 2px}
+.add-fields input[type=range]{width:100%}
+.addsec{border-style:dashed}
+.act-row{display:flex;align-items:center;gap:10px;padding:8px 0}
+.act-row+.act-row{border-top:1px solid var(--line)}
+.act-tx{flex:1;min-width:0;font-size:13.5px;overflow-wrap:anywhere}
+.tempstep{display:flex;align-items:center;gap:14px;justify-content:center}
+.tempstep button{width:40px;height:40px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--fg);font-size:22px;line-height:1}
+.tempstep button:active{border-color:var(--accent);color:var(--accent)}
+.tempstep b{font-size:22px;font-weight:600;min-width:52px;text-align:center}
+/* quick-run strip on the rooms page */
+.scene-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;-webkit-overflow-scrolling:touch}
+.scene-chip{flex:none;display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--fg);font-weight:600;font-size:13.5px}
+.scene-chip:active{transform:scale(.97)}
+.scene-chip.running{opacity:.6}
+.scene-chip .sc-ic{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
+.scene-chip .sc-ic svg{width:12px;height:12px;margin-inline-start:1px}
+/* ── automations ── */
+.seg.scseg{margin-bottom:4px}.seg.scseg button{flex:1}
+.auto-run .sc-ic{background:var(--card);border:1px solid var(--accent);color:var(--accent)}
+.auto-run.off{opacity:.6}.auto-run.off .sc-ic{border-color:var(--line);color:var(--muted)}
+.auto-gate{border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));background:color-mix(in srgb,var(--accent) 9%,var(--card));border-radius:12px;padding:10px 12px}
+.daychips{display:flex;gap:6px;flex-wrap:wrap}
+.daychip{width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted);font-weight:650;font-size:14px}
+.daychip[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.chkrow{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:550;padding:4px 0}
+.chkrow input{width:18px;height:18px;accent-color:var(--accent)}
 /* hero: ring centered in the middle column, climate card to one side */
 .ahero.has-climate{display:grid;grid-template-columns:minmax(118px,1fr) auto minmax(118px,1fr);gap:12px;align-items:center;flex-direction:row}
 .ahero.has-climate .hero-ring{display:flex;flex-direction:column;align-items:center;justify-self:center}
@@ -423,7 +500,7 @@ details.dev>summary::-webkit-details-marker{display:none}
 .dbx-list button:first-child{border-top:0}
 .dbx-list button:disabled{opacity:.45}
 
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--tab-h) + 16px + env(safe-area-inset-bottom,0px));z-index:40;background:var(--fg);color:var(--bg);border-radius:14px;padding:11px 16px;font-size:13.5px;font-weight:500;max-width:calc(100% - 32px);box-shadow:0 10px 30px rgb(0 0 0 / .35)}
+.toast{position:fixed;left:0;right:0;margin-inline:auto;width:fit-content;bottom:calc(var(--tab-h) + 16px + env(safe-area-inset-bottom,0px));z-index:40;background:var(--fg);color:var(--bg);border-radius:14px;padding:11px 16px;font-size:13.5px;font-weight:500;max-width:calc(100% - 32px);box-shadow:0 10px 30px rgb(0 0 0 / .35)}
 
 .banner{display:flex;align-items:center;gap:11px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:var(--r);padding:12px 15px;font-size:13.5px}
 .banner span{flex:1;min-width:180px}
@@ -1306,7 +1383,7 @@ const Backend = {
   async uploadBlob(projectId, bytes){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
     const body = bytes instanceof Blob ? bytes : new Blob([bytes], { type:'application/octet-stream' });
-    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream' });
+    const { error } = await sb.storage.from(BUCKET).upload(blobPath(projectId), body, { upsert:true, contentType:'application/octet-stream', cacheControl:'0' });
     if(error) throw new Error(error.message);
     return true;
   },
@@ -1369,14 +1446,88 @@ const Backend = {
   },
   async downloadBlob(projectId){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    // Fetch via a short-lived signed URL with a cache-buster, so a file just re-synced from Dropbox is
+    // never served from the Storage/CDN cache (which otherwise returns the OLD content for up to an hour).
+    try{
+      const { data:sg, error:se } = await sb.storage.from(BUCKET).createSignedUrl(blobPath(projectId), 120);
+      if(!se && sg && sg.signedUrl){
+        const u = sg.signedUrl + (sg.signedUrl.indexOf('?')>-1?'&':'?') + 'cb=' + Date.now();
+        const r = await fetch(u, { cache:'no-store' });
+        if(r.ok) return await r.arrayBuffer();
+      }
+    }catch(_){ /* fall back to direct download below */ }
     const { data, error } = await sb.storage.from(BUCKET).download(blobPath(projectId));
     if(error) throw new Error(error.message);
     return await data.arrayBuffer();
+  },
+
+  /* ── scenes (per user, per project) ── */
+  async listScenes(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('scenes').select('*')
+      .eq('project_id', projectId).order('sort', { ascending:true }).order('created_at', { ascending:true });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createScene(projectId, name, actions){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('scenes')
+      .insert({ user_id:user.id, project_id:projectId, name, actions:actions||[] })
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async updateScene(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('scenes')
+      .update(Object.assign({}, fields, { updated_at:new Date().toISOString() }))
+      .eq('id', id).select();
+    if(error) throw new Error(error.message);
+    if(!data || !data.length) throw new Error('השמירה נכשלה.');
+    return data[0];
+  },
+  async deleteScene(id){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('scenes').delete().eq('id', id);
+    if(error) throw new Error(error.message);
+  },
+
+  /* ── automations (per user, per project) ── */
+  async listAutomations(projectId){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('automations').select('*')
+      .eq('project_id', projectId).order('time', { ascending:true });
+    if(error) throw new Error(error.message);
+    return data || [];
+  },
+  async createAutomation(projectId, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data:{ user } } = await sb.auth.getUser(); if(!user) throw new Error('התחבר קודם');
+    const { data, error } = await sb.from('automations')
+      .insert(Object.assign({ user_id:user.id, project_id:projectId }, fields))
+      .select().single();
+    if(error) throw new Error(error.message);
+    return data;
+  },
+  async updateAutomation(id, fields){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.from('automations')
+      .update(Object.assign({}, fields, { updated_at:new Date().toISOString() }))
+      .eq('id', id).select();
+    if(error) throw new Error(error.message);
+    if(!data || !data.length) throw new Error('השמירה נכשלה.');
+    return data[0];
+  },
+  async deleteAutomation(id){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.from('automations').delete().eq('id', id);
+    if(error) throw new Error(error.message);
   }
 };
 
 "use strict";
-const BUILD_ID = "1029-0933";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1103-0938";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1489,6 +1640,8 @@ const CHTYPE = { 0:'וירטואלי', 1:'עמעום', 3:'מיתוג', 11:'מנ�
 // NOTE: system→room matching (classifyUser) must use a.name (the original), never this.
 const areaName = a => { if(!a) return ''; const o = P&&P.tech&&P.tech.names&&P.tech.names[a.id]; return o || a.name || (a.id===1 ? 'אזור 1 · ערוצים לא משויכים' : 'אזור '+a.id); };
 const chName = ch => ch.name || 'ערוץ '+ch.id;
+// For the end-user display: show the project/file name without the trailing date and without .dlj.
+const cleanProjName = s => { s=(s||'').replace(/\.dlj$/i,'').trim(); return s.replace(/[\s\-_,.]*\d{1,2}[.\-_\/ ]\d{1,2}([.\-_\/ ]\d{2,4})?\s*$/,'').trim() || s; };
 const devLabel = d => d ? ((d.name||KIND[d.kind]) + (d.location ? ' · '+d.location : '')) : '?';
 const presetName = (a, p) => a.presets[String(p)] || (p===4 ? 'Off' : '');
 const isSwitch = ch => ch.type===3;
@@ -1984,7 +2137,7 @@ function renderAcActive(){
   if(!on.length){ box.innerHTML=''; return; }
   box.innerHTML = `<section class="floor"><div class="floor-title">מזגנים פועלים</div>
     <div class="ac-active">${on.map(x=>{ const st=cmState[x.uid]||{}; const rid=CM.roomOf(x.u);
-      return `<button class="ac-live" ${rid!=null?`data-area="${rid}" data-roomtile="${rid}"`:''}>
+      return `<button class="ac-live ${st.mode==='heat'?'heat':'cool'}" ${rid!=null?`data-area="${rid}" data-roomtile="${rid}"`:''}>
         <span class="al-ic">${AC_SVG}</span>
         <span class="al-nm">${esc(cmRoomLabel(x.uid))}</span>
         <span class="al-t">${st.setTemp!=null?st.setTemp+'°':''}${st.roomTemp!=null?` · חדר ${st.roomTemp}°`:''}</span>
@@ -2147,6 +2300,7 @@ const curScrollY = () => window.scrollY || document.documentElement.scrollTop ||
 function setScrollY(y){ window.scrollTo(0,y); try{ document.documentElement.scrollTop=y; document.body.scrollTop=y; }catch(e){} }
 function go(r){
   if(r.tab!=='setup') dbxAwaitingCode = false;
+  if(r.tab!=='scenes'){ _sceneEdit = null; _confirmDel = null; _autoEdit = null; _confirmDelA = null; }   // leaving scenes drops any half-built draft
   const wasAreasList = route.tab==='areas' && route.area==null;
   if(wasAreasList) _areasScroll = curScrollY();                 // leaving the rooms list → remember where we were
   route = Object.assign({ area:null }, r);
@@ -2160,14 +2314,16 @@ function go(r){
 
 function render(){
   if(USER && (route.tab==='devices' || route.tab==='log')) route.tab = 'areas';   // those tabs don't exist for end-users
+  if(!USER && route.tab==='scenes') route.tab = 'areas';                          // scenes are an end-user feature
   document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab===route.tab ? 'page' : 'false'));
   $('#backBtn').hidden = route.area==null;
   const m = $('#main');
   if(!P && route.tab!=='setup' && route.tab!=='log'){ route.tab='setup'; return render(); }
   if(route.area!=null) return renderArea(m, P.areas[route.area]);
-  $('#hTitle').textContent = P ? P.name : 'DyNet Remote';
-  $('#hSub').textContent = (P ? `${Object.keys(P.areas).length} אזורים${USER?'':` · ${P.deviceOrder.length} בקרים`}` : 'לא נטען פרויקט') + (BUILD_ID && BUILD_ID[0] !== '/' ? ` · build ${BUILD_ID}` : '');
-  ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup })[route.tab](m);
+  $('#hTitle').textContent = P ? (USER ? cleanProjName(P.name) : P.name) : 'DyNet Remote';
+  if(USER){ $('#hSub').textContent=''; $('#hSub').style.display='none'; }
+  else $('#hSub').textContent = (P ? `${Object.keys(P.areas).length} אזורים · ${P.deviceOrder.length} בקרים` : 'לא נטען פרויקט') + (BUILD_ID && BUILD_ID[0] !== '/' ? ` · build ${BUILD_ID}` : '');
+  ({ areas:renderAreas, devices:renderDevices, log:renderLog, setup:renderSetup, scenes:renderScenes })[route.tab](m);
 }
 function pendingEditCount(){
   if(!P) return 0;
@@ -2192,7 +2348,7 @@ const SYS_TYPES = {
   curtain:{w:['וילון','curtain'],he:'וילונות'}, shade:{w:['צלון','shade'],he:'צלונים'},
   awning:{w:['סוכך','awning'],he:'סוככים'},     blind:{w:['תריס','שאטר','blind','shutter'],he:'תריסים'},
   heating:{w:['חימום','heating'],he:'חימום רצפה'}, pergola:{w:['פרגולה','pergola'],he:'פרגולה'},
-  screen:{w:['רשת','screen'],he:'רשתות'},       window:{w:['חלונות חשמלי','חלון חשמלי'],he:'חלונות חשמליים'},
+  screen:{w:['רשת','screen'],he:'רשתות'},       window:{w:['חלון','חלונות חשמלי','חלון חשמלי','window'],he:'חלונות חשמליים'},
   gate:{w:['שער','gate'],he:'שערים'},           roller:{w:['גליל','roller'],he:'גלילה'}
 };
 const AC_WORDS = ['מיזוג','מזגן','מזוג','hvac','climate'];
@@ -2203,24 +2359,41 @@ const sysTypeOf = s => { const n=heNorm(s); for(const t in SYS_TYPES) if(SYS_TYP
 const acIncluded = () => (P && P.tech && P.tech.includeAC!=null) ? P.tech.includeAC : cfg.includeAC;
 function classifyUser(){
   if(P._uc && P._ucAC===acIncluded()) return P._uc;
+  const ov = (P && P.tech && P.tech.sysRoom) || {};   // technician's manual overrides: areaId → roomId | 'own' | 'hide'
   const lightFloors = [], systems = [];
+  const addRoom = (a, fn) => { let fl=lightFloors.find(x=>x.floor===fn); if(!fl){ fl={floor:fn,rooms:[]}; lightFloors.push(fl); } fl.rooms.push(a); };
+  // Folder (floor) each area sits in — so a light manually pinned to a room can be grouped under that room's folder.
+  const floorByArea = {};
+  (function scan(node, floor){ (node.children||[]).forEach(c=>{ if(c.type==='folder') scan(c, floor||c.name); else if(c.type==='area') floorByArea[c.id]=floor||'כללי'; }); })(P.tree,'');
   (function walk(node, floor, sysCtx){
     (node.children||[]).forEach(c=>{
       if(c.type==='folder'){
         walk(c, floor || c.name, sysCtx || (isAC(c.name)?'ac':sysTypeOf(c.name)));
       } else if(c.type==='area'){
         const a = P.areas[c.id]; if(!a) return;
+        const fn = floor||'כללי';
         const t = sysCtx || (isAC(a.name)?'ac':sysTypeOf(a.name));
+        const o = ov[a.id];
+        // Manual override wins over everything (including A/C exclusion and the generic filter).
+        if(o==='hide') return;
+        if(o==='own'){ addRoom(a, fn); return; }
+        if(typeof o==='string' && o.slice(0,2)==='f:'){ addRoom(a, o.slice(2)||fn); return; }   // pinned to a folder → own tile under that folder
+        if(o!=null && /^\d+$/.test(String(o))){
+          // Pinned to a room: a cover/system shows as that room's cover; a light shows as a tile under that room's folder.
+          if(t && t!=='ac') systems.push({ area:a, type:t, forceRoom:+o });
+          else addRoom(a, floorByArea[+o] || fn);
+          return;
+        }
+        // no override → default behavior
         if(t==='ac') return;                     // A/C no longer comes from DyNet — it's CoolMaster-direct now
         if(t){ systems.push({ area:a, type:t }); }
         else {
-          const fn = floor||'כללי';
           // Hide general-lighting / scenario areas from the end user — except a short allow-list (stairs, boiler).
           const GEN = ['כלל','תרחיש','סצנ','general','scene'], ALLOW = ['מדרגות','דוד'];
           const generic = GEN.some(g=>heNorm(fn).includes(heNorm(g))) || GEN.some(g=>heNorm(a.name||'').includes(heNorm(g)));
           const allowed = ALLOW.some(w=>heNorm(a.name||'').includes(heNorm(w)));
           if(generic && !allowed) return;
-          let fl=lightFloors.find(x=>x.floor===fn); if(!fl){ fl={floor:fn,rooms:[]}; lightFloors.push(fl); } fl.rooms.push(a);
+          addRoom(a, fn);
         }
       }
     });
@@ -2230,6 +2403,7 @@ function classifyUser(){
   const ALIASES = [['מאסטר','הורים']];   // a system named "…מאסטר" belongs to the room whose name has "הורים"
   const rooms = lightFloors.flatMap(f=>f.rooms).map(a=>({id:a.id,name:a.name||''})).filter(r=>r.name);
   for(const s of systems){
+    if(s.forceRoom!=null){ (roomSys[s.forceRoom]=roomSys[s.forceRoom]||[]).push(s); continue; }   // technician pinned it to a room
     const sn = s.area.name||''; let best=null;
     for(const [aw,rw] of ALIASES){ if(sn.includes(aw)){ const cands=rooms.filter(x=>x.name.includes(rw)); for(const r of cands){ if(!best || r.name.length>best.name.length) best=r; } if(best) break; } }
     if(!best) for(const r of rooms){ const i=sn.indexOf(r.name); if(i<0) continue; const after=sn[i+r.name.length]; if(after && /[0-9]/.test(after)) continue; if(!best || r.name.length>best.name.length) best=r; }
@@ -2256,10 +2430,26 @@ const COVER_ICON = { curtain:CURTAIN_SVG, shade:BLINDS_SVG, blind:BLINDS_SVG, aw
 const COV_OPEN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
 const COV_STOP  = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2.4"/></svg>';
 const COV_CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
-function coverTile(a, type){
+// Inside a room the covers repeat the room name ("חדר הורים צלון שמאל"), which fills the row
+// and hides the part that tells them apart. Show only the distinguishing tail; if the name is
+// nothing but the room name, fall back to the system label ("צלון").
+function covLabel(a, roomName, type){
+  let nm = (areaName(a) || '').trim();
+  const rn = (roomName || '').trim();
+  if(rn){
+    const i = heNorm(nm).indexOf(heNorm(rn));   // heNorm is length-preserving, so i maps onto nm
+    if(i >= 0){
+      let cut = (nm.slice(0, i) + nm.slice(i + rn.length))
+        .replace(/[\s\-–—·•_,.|/\\]+/g,' ').trim();
+      nm = cut || sysLabel(type);
+    }
+  }
+  return nm;
+}
+function coverTile(a, type, roomName){
   return `<div class="cov-row" data-covarea="${a.id}">
     <span class="cov-ic">${COVER_ICON[type]||CURTAIN_SVG}</span>
-    <span class="cov-nm">${esc(areaName(a))}</span>
+    <span class="cov-nm">${esc(covLabel(a, roomName, type))}</span>
     <div class="cov-btns">
       <button class="cov-b" data-cov="${a.id}" data-p="1" aria-label="פתיחה">${COV_OPEN}<small>פתיחה</small></button>
       <button class="cov-b" data-cov="${a.id}" data-p="4" aria-label="עצירה">${COV_STOP}<small>עצירה</small></button>
@@ -2285,7 +2475,7 @@ function climateCard(unit){
   const mode = st.mode==='heat' ? 1 : 0;
   const on = !!st.on;
   const id = esc(uid);
-  return `<div class="climate${on?' on':''}" data-clim="${id}">
+  return `<div class="climate ${mode===1?'heat':'cool'}${on?' on':''}" data-clim="${id}">
     <div class="cl-top"><span class="cl-nm">${esc(unit.name||uid)}</span>
       <button class="cl-pw" data-acpw="${id}" aria-pressed="${on}" aria-label="הפעלה/כיבוי">${POWER_SVG}</button></div>
     <div class="cl-set">
@@ -2306,6 +2496,7 @@ function updateClimateCards(){
   document.querySelectorAll('.climate[data-clim]').forEach(card=>{
     const uid=card.dataset.clim, st=cmState[uid]; if(!st) return;
     card.classList.toggle('on', !!st.on);
+    const heat = st.mode==='heat'; card.classList.toggle('heat', heat); card.classList.toggle('cool', !heat);
     const pw=card.querySelector('.cl-pw'); if(pw) pw.setAttribute('aria-pressed', !!st.on);
     const tn=card.querySelector('[data-settemp]'); if(tn && st.setTemp!=null && card.dataset.touchTemp!=='1') tn.textContent=st.setTemp;
     const rn=card.querySelector('[data-roomtemp]'); if(rn) rn.textContent = st.roomTemp!=null ? st.roomTemp+'°' : '—';
@@ -2327,6 +2518,7 @@ document.addEventListener('click', e => {
     act(CM.setTemp(uid,t).then(()=>{ if(card) delete card.dataset.touchTemp; cmRefresh(); })); return; }
   const md=e.target.closest('.cl-md'); if(md){ const [uid,mode]=md.dataset.acmode.split(':');
     cmState[uid]=Object.assign({},cmState[uid],{mode}); md.parentElement.querySelectorAll('.cl-md').forEach(x=>x.setAttribute('aria-pressed',x===md));
+    const card=md.closest('.climate'); if(card){ card.classList.toggle('heat',mode==='heat'); card.classList.toggle('cool',mode!=='heat'); }
     act(CM.setMode(uid,mode).then(()=>cmRefresh())); return; }
   const fb=e.target.closest('.cl-fb'); if(fb){ const [uid,v]=fb.dataset.acfan.split(':');
     fb.parentElement.querySelectorAll('.cl-fb').forEach(x=>x.setAttribute('aria-pressed',x===fb));
@@ -2334,7 +2526,7 @@ document.addEventListener('click', e => {
 });
 const sysLabel = t => t==='ac' ? 'מיזוג' : (SYS_TYPES[t]||{}).he || t;
 // Bottom "systems in room" card handles covers only; A/C is a CoolMaster climate card at the top.
-const sysTiles = (type, areas) => `<div class="cov-grid">${areas.map(a=>coverTile(a,type)).join('')}</div>`;
+const sysTiles = (type, areas, roomName) => `<div class="cov-grid">${areas.map(a=>coverTile(a,type,roomName)).join('')}</div>`;
 const LIST_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>';
 const GRID_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>';
 function renderUserAreas(m){
@@ -2348,13 +2540,387 @@ function renderUserAreas(m){
   const orphanHtml = orphan.length ? `<section class="floor"><div class="floor-title">מיזוג (לא שויך לחדר — בדוק שהשם תואם לשם חדר)</div>
     <div class="clim-col">${orphan.map(climateCard).join('')}</div></section>` : '';
   const toolbar = `<div class="rooms-toolbar"><button class="viewtoggle" id="viewToggle" aria-label="החלף תצוגה">${listView?GRID_SVG:LIST_SVG}</button></div>`;
-  m.innerHTML = `<div class="userareas">${toolbar}<div id="acActive"></div>${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
+  // Quick-run scene strip (the user's saved scenes), for one-tap activation from the rooms page.
+  const sceneStrip = _scenes.length ? `<section class="floor"><div class="floor-title">תרחישים</div>
+    <div class="scene-strip">${_scenes.map(s=>`<button class="scene-chip" data-runscene="${s.id}"><span class="sc-ic">${PLAY_SVG}</span>${esc(s.name)}</button>`).join('')}</div></section>` : '';
+  m.innerHTML = `<div class="userareas">${toolbar}${sceneStrip}<div id="acActive"></div>${lightFloors.map(floorHtml).join('')}${orphanHtml}</div>`;
   $('#viewToggle') && ($('#viewToggle').onclick = () => { cfg.roomView = listView?'grid':'list'; saveCfg(); renderUserAreas(m); });
+  m.querySelectorAll('[data-runscene]').forEach(b => b.onclick = () => { const s=_scenes.find(x=>x.id===b.dataset.runscene); if(s) runSceneUI(s, b); });
   // Live A/C indication at the top of the rooms list: which units are currently running.
   const anyAC = (USER && acIncluded()) ? CM.units().length : 0;
   if(anyAC && CM.enabled()){ renderAcActive(); cmRefresh(); _cmPoll=setInterval(cmRefresh,6000); }
 }
 /* Areas tab */
+/* ───────── Scenes (תרחישים) — end-user-built, stored per user in Supabase ─────────
+   A scene is a saved list of actions the app replays on tap:
+   lights on/off, covers open/close, A/C on/off. */
+const PLAY_SVG  = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.2v13.6c0 .6.7 1 1.2.6l10-6.8a.8.8 0 0 0 0-1.3l-10-6.7A.8.8 0 0 0 8 5.2z"/></svg>';
+const EDIT_SVG  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+const TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"/></svg>';
+let _scenes = [];
+let _sceneEdit = null;     // null = list view · object = editing (new has no id)
+let _confirmDel = null;    // scene id pending delete confirmation
+// Load this user's scenes for the current project into the cache (used by the areas strip + scenes tab).
+async function loadScenes(){
+  if(!P || !P._server){ _scenes=[]; return; }
+  try{ _scenes = await Backend.listScenes(P._server.id); }catch(e){}
+}
+
+// Everything the user can put into a scene, grouped (used by the builder's pickers).
+function sceneTargets(){
+  const { lightFloors, roomSys, unmatched } = classifyUser();
+  const lights = [];
+  lightFloors.forEach(f => f.rooms.forEach(a => { if(a.channels && a.channels.length) lights.push({ id:a.id, name:areaName(a), channels:a.channels }); }));
+  const covers = [];
+  const pushCov = s => covers.push({ id:s.area.id, name:areaName(s.area) });
+  Object.values(roomSys||{}).forEach(arr => arr.forEach(pushCov));
+  (unmatched||[]).forEach(pushCov);
+  const acs = (acIncluded() ? CM.units() : []).map(u => ({ uid:CM.uid(u), name:u.name || CM.uid(u) }));
+  return { lights, covers, acs };
+}
+const COVER_ACT_HE = { open:'פתח', stop:'עצור', close:'סגור' };
+// Human description of a single scene action, for the action list.
+function actDescribe(ac){
+  if(ac.t==='light'){ const a=P.areas[ac.area]; const nm=a?areaName(a):'אזור '+ac.area;
+    const ch = (ac.ch && a) ? (a.channels.find(c=>c.id===ac.ch)) : null;
+    const chl = ac.ch ? (ch?chName(ch):'ערוץ '+ac.ch) : 'כל הערוצים';
+    if(ch && isSwitch(ch)) return `${nm} · ${chl} · ${+ac.pct>0?'הדלקה':'כיבוי'}`;
+    return `${nm} · ${chl} → ${ac.pct}%`; }
+  if(ac.t==='cover'){ const a=P.areas[ac.area]; let s=`${a?areaName(a):'אזור '+ac.area} · ${COVER_ACT_HE[ac.act]||ac.act}`; if(ac.stopAfter>0) s+=` · עצור אחרי ${ac.stopAfter}ש׳`; return s; }
+  if(ac.t==='ac'){ const u=CM.units().find(x=>CM.uid(x)===ac.uid); const nm=u?(u.name||ac.uid):ac.uid;
+    return ac.on ? `${nm} · ${ac.mode==='heat'?'חום':'קור'} ${ac.temp}°` : `${nm} · כבוי`; }
+  return '';
+}
+// Fade for a light channel in a scene: dimmers fade over 2s, on/off (switch) channels snap (0s).
+function chFadeFor(area, chId){ const a=P.areas[area]; const c=a&&a.channels.find(x=>x.id===chId); return (c&&isSwitch(c))?0:2; }
+// Replay a scene's actions over the gateway / CoolMaster, with a small gap between each.
+async function runScene(s){
+  for(const ac of (s.actions||[])){
+    try{
+      if(ac.t==='light'){
+        const a=P.areas[ac.area];
+        const chans = ac.ch ? [ac.ch] : ((a&&a.channels.map(c=>c.id))||[0]);
+        for(const ch of chans){ await GW.level(ac.area, ch, ac.pct, chFadeFor(ac.area, ch)); await new Promise(r=>setTimeout(r,70)); }
+      } else if(ac.t==='cover'){
+        await GW.preset(ac.area, ac.act==='open' ? 1 : ac.act==='close' ? 2 : 4, 0);
+        // optional delay → stop the cover partway (open/close only)
+        if((ac.act==='open'||ac.act==='close') && ac.stopAfter>0){
+          setTimeout(()=>{ act(GW.preset(ac.area, 4, 0)); }, ac.stopAfter*1000);
+        }
+      } else if(ac.t==='ac'){
+        await CM.setOn(ac.uid, !!ac.on);
+        if(ac.on){ if(ac.mode) await CM.setMode(ac.uid, ac.mode); if(ac.temp!=null) await CM.setTemp(ac.uid, ac.temp); }
+      }
+    }catch(e){}
+    await new Promise(r => setTimeout(r, 140));
+  }
+  cmRefresh();
+}
+async function runSceneUI(s, btn){
+  if(btn.classList.contains('running')) return;
+  btn.classList.add('running');
+  await runScene(s);
+  btn.classList.remove('running');
+  toast('„'+s.name+'” הופעל ✅', 3500);
+}
+function scSeg(){
+  return `<div class="seg scseg" id="scSeg"><button data-t="scenes" aria-pressed="${_scTab!=='autos'}">תרחישים</button><button data-t="autos" aria-pressed="${_scTab==='autos'}">אוטומציות</button></div>`;
+}
+function bindScSeg(m){ m.querySelectorAll('#scSeg button').forEach(b=>b.onclick=()=>{ _scTab=b.dataset.t; render(); }); }
+function renderScenes(m){
+  if(!USER){ route.tab='areas'; return render(); }
+  if(!P || !P._server){ m.innerHTML = `<div class="scenes-wrap"><div class="empty">טען פרויקט קודם.</div></div>`; return; }
+  if(_sceneEdit) return renderSceneEditor(m);
+  if(_autoEdit) return renderAutoEditor(m);
+  if(_scTab==='autos'){ m.innerHTML = `<div class="scenes-wrap">${scSeg()}<div id="autoBody"></div></div>`; bindScSeg(m); return renderAutos(m); }
+  m.innerHTML = `<div class="scenes-wrap">${scSeg()}
+    <div class="scenes-head"><div><h2>התרחישים שלי</h2><div class="note">בנה תרחיש, ובלחיצה אחת הכל קורה.</div></div>
+      <button class="btn primary" id="scNew">+ חדש</button></div>
+    <div class="scene-list" id="sceneList"><div class="note">טוען…</div></div></div>`;
+  bindScSeg(m);
+  $('#scNew').onclick = () => { _sceneEdit = { name:'', actions:[] }; _actDraft=null; _confirmDel=null; render(); };
+  loadScenes().then(() => drawSceneList())
+    .catch(e => { const el=$('#sceneList'); if(el) el.innerHTML = `<div class="empty">טעינה נכשלה: ${esc(e.message)}</div>`; });
+}
+function drawSceneList(){
+  const box = $('#sceneList'); if(!box) return;
+  box.innerHTML = _scenes.map(sceneCard).join('') || `<div class="empty">אין עדיין תרחישים. צור אחד חדש עם הכפתור למעלה.</div>`;
+  box.querySelectorAll('[data-run]').forEach(b => b.onclick = () => { const s=_scenes.find(x=>x.id===b.dataset.run); if(s) runSceneUI(s, b); });
+  box.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => { const s=_scenes.find(x=>x.id===b.dataset.edit); if(s){ _sceneEdit = JSON.parse(JSON.stringify(s)); _confirmDel=null; render(); } });
+  box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { _confirmDel = b.dataset.del; drawSceneList(); });
+  box.querySelectorAll('[data-delno]').forEach(b => b.onclick = () => { _confirmDel = null; drawSceneList(); });
+  box.querySelectorAll('[data-delyes]').forEach(b => b.onclick = async () => {
+    const id=b.dataset.delyes;
+    try{ await Backend.deleteScene(id); _scenes=_scenes.filter(x=>x.id!==id); _confirmDel=null; toast('התרחיש נמחק'); drawSceneList(); }
+    catch(e){ toast('מחיקה נכשלה: '+e.message, 5000); }
+  });
+}
+function sceneCard(s){
+  if(_confirmDel===s.id){
+    return `<div class="scene-card confirm"><span class="sc-nm">למחוק את „${esc(s.name)}”?</span>
+      <div class="scene-ops" style="flex-direction:row"><button class="btn scbtn" data-delno="${s.id}">ביטול</button><button class="btn scbtn danger" data-delyes="${s.id}">מחק</button></div></div>`;
+  }
+  const n=(s.actions||[]).length;
+  return `<div class="scene-card">
+    <button class="scene-run" data-run="${s.id}"><span class="sc-ic">${PLAY_SVG}</span>
+      <span class="sc-txt"><span class="sc-nm">${esc(s.name)}</span><span class="sc-meta">${n} פעולות</span></span></button>
+    <div class="scene-ops"><button class="iconbtn" data-edit="${s.id}" aria-label="ערוך">${EDIT_SVG}</button>
+      <button class="iconbtn" data-del="${s.id}" aria-label="מחק">${TRASH_SVG}</button></div></div>`;
+}
+// ── Scene builder: add fully-specified actions one at a time ──
+let _actDraft = null;   // the action currently being composed in the add-panel
+const freshDraft = t => ({ t, area:'', ch:0, pct:100, act:'open', stopAfter:0, uid:'', on:true, mode:'cool', temp:24 });
+function captureDraft(){
+  const d=_actDraft; if(!d) return; const q=id=>document.getElementById(id);
+  if(d.t==='light'){ if(q('adArea')) d.area=q('adArea').value; if(q('adCh')) d.ch=+q('adCh').value; if(q('adPct')) d.pct=+q('adPct').value; }
+  else if(d.t==='cover'){ if(q('adArea')) d.area=q('adArea').value; if(q('adStop')) d.stopAfter=+q('adStop').value||0; }
+  else if(d.t==='ac'){ if(q('adUnit')) d.uid=q('adUnit').value; if(q('adTemp')) d.temp=+q('adTemp').value; }
+}
+function buildAction(d, T){
+  if(d.t==='light'){ const a=T.lights.find(l=>String(l.id)===String(d.area))||T.lights[0]; if(!a) return null; return { t:'light', area:a.id, ch:+d.ch||0, pct:+d.pct }; }
+  if(d.t==='cover'){ const c=T.covers.find(x=>String(x.id)===String(d.area))||T.covers[0]; if(!c) return null; const a={ t:'cover', area:c.id, act:d.act||'open' }; if((a.act==='open'||a.act==='close') && +d.stopAfter>0) a.stopAfter=+d.stopAfter; return a; }
+  const u=T.acs.find(x=>x.uid===d.uid)||T.acs[0]; if(!u) return null;
+  return d.on ? { t:'ac', uid:u.uid, on:true, mode:d.mode||'cool', temp:+d.temp } : { t:'ac', uid:u.uid, on:false };
+}
+// Shared action-builder (used by both the scene editor and the automation editor):
+// an action list + an "add action" panel. Operates on ed.actions.
+function actionsBlockHtml(ed, title){
+  const d=_actDraft || (_actDraft=freshDraft('light'));
+  const { lights, covers, acs } = sceneTargets();
+  const listHtml = (ed.actions||[]).length
+    ? ed.actions.map((a,i)=>`<div class="act-row"><span class="act-tx">${esc(actDescribe(a))}</span><button class="iconbtn" data-actdel="${i}" aria-label="הסר">${TRASH_SVG}</button></div>`).join('')
+    : `<div class="note">עדיין אין פעולות — הוסף למטה.</div>`;
+  let fields='';
+  if(d.t==='light'){
+    const area = lights.find(l=>String(l.id)===String(d.area)) || lights[0];
+    const chObj = (area && d.ch) ? area.channels.find(c=>c.id===d.ch) : null;
+    const isSw = chObj && isSwitch(chObj);
+    const levelField = isSw
+      ? `<div class="field"><label>מצב</label><div class="seg actSeg" id="adLvlSeg"><button data-pct="100" aria-pressed="${+d.pct>0}">הדלק</button><button data-pct="0" aria-pressed="${+d.pct===0}">כבה</button></div></div>`
+      : `<div class="field"><label>עוצמה: <b id="adPctV">${d.pct}%</b></label><input type="range" id="adPct" min="0" max="100" step="5" value="${d.pct}"></div>`;
+    fields = lights.length ? `
+      <div class="field"><label>אזור</label><select id="adArea">${lights.map(l=>`<option value="${l.id}" ${area&&l.id===area.id?'selected':''}>${esc(l.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>ערוץ</label><select id="adCh"><option value="0" ${!d.ch?'selected':''}>כל הערוצים</option>${area?area.channels.map(c=>`<option value="${c.id}" ${d.ch===c.id?'selected':''}>${esc(chName(c))}</option>`).join(''):''}</select></div>
+      ${levelField}` : `<div class="note">אין אזורי תאורה.</div>`;
+  } else if(d.t==='cover'){
+    const c0 = covers.find(c=>String(c.id)===String(d.area)) || covers[0];
+    fields = covers.length ? `
+      <div class="field"><label>וילון / צלון</label><select id="adArea">${covers.map(c=>`<option value="${c.id}" ${c0&&c.id===c0.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>פעולה</label><div class="seg actSeg" id="adActSeg">${['open','stop','close'].map(a=>`<button data-act="${a}" aria-pressed="${d.act===a}">${COVER_ACT_HE[a]}</button>`).join('')}</div></div>
+      ${(d.act==='open'||d.act==='close') ? `<div class="field"><label>השהייה ואז עצירה (שניות · 0 = ללא)</label><input type="number" id="adStop" min="0" max="600" value="${d.stopAfter||0}"></div>` : ''}` : `<div class="note">אין וילונות/צלונים.</div>`;
+  } else {
+    const u0 = acs.find(u=>u.uid===d.uid) || acs[0];
+    fields = acs.length ? `
+      <div class="field"><label>מזגן</label><select id="adUnit">${acs.map(u=>`<option value="${esc(u.uid)}" ${u0&&u.uid===u0.uid?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>מצב</label><div class="seg actSeg" id="adPwSeg"><button data-on="1" aria-pressed="${d.on}">הדלק</button><button data-on="0" aria-pressed="${!d.on}">כבה</button></div></div>
+      ${d.on?`<div class="field"><label>קירור / חימום</label><div class="seg actSeg" id="adModeSeg"><button data-md="cool" aria-pressed="${d.mode==='cool'}">קור</button><button data-md="heat" aria-pressed="${d.mode==='heat'}">חום</button></div></div>
+      <div class="field"><label>טמפרטורה</label><div class="tempstep"><button id="adTempDn" type="button">−</button><b id="adTempV">${d.temp}°</b><button id="adTempUp" type="button">+</button><input type="hidden" id="adTemp" value="${d.temp}"></div></div>`:''}` : `<div class="note">אין מזגנים.</div>`;
+  }
+  const typeBtn=(t,l)=>`<button data-type="${t}" aria-pressed="${d.t===t}">${l}</button>`;
+  return `<section class="sc-sec"><h3>${esc(title)}</h3><div id="actList">${listHtml}</div></section>
+    <section class="sc-sec addsec"><h3>הוספת פעולה</h3>
+      <div class="seg typeSeg" id="adTypeSeg">${typeBtn('light','תאורה')}${typeBtn('cover','וילון/צלון')}${typeBtn('ac','מזגן')}</div>
+      <div class="add-fields">${fields}</div>
+      <button class="btn primary" id="adAdd" style="width:100%;margin-top:6px">+ הוסף</button></section>`;
+}
+// sync() captures the editor's own fields into ed before any re-render; rerender(m) repaints it.
+function bindActionsBlock(m, ed, sync, rerender){
+  const d=_actDraft, T=sceneTargets();
+  m.querySelectorAll('#adTypeSeg button').forEach(b=>b.onclick=()=>{ sync(); _actDraft=freshDraft(b.dataset.type); rerender(m); });
+  const areaSel=$('#adArea'); if(areaSel && d.t==='light') areaSel.onchange=()=>{ sync(); captureDraft(); d.ch=0; rerender(m); };
+  const chSel=$('#adCh'); if(chSel && d.t==='light') chSel.onchange=()=>{ sync(); captureDraft(); rerender(m); };   // re-render so a switch channel shows on/off, a dimmer shows %
+  const pct=$('#adPct'); if(pct) pct.oninput=()=>{ const v=$('#adPctV'); if(v) v.textContent=pct.value+'%'; };
+  m.querySelectorAll('#adLvlSeg button').forEach(b=>b.onclick=()=>{ d.pct=+b.dataset.pct; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
+  m.querySelectorAll('#adActSeg button').forEach(b=>b.onclick=()=>{ sync(); captureDraft(); d.act=b.dataset.act; rerender(m); });
+  m.querySelectorAll('#adPwSeg button').forEach(b=>b.onclick=()=>{ sync(); captureDraft(); d.on=b.dataset.on==='1'; rerender(m); });
+  m.querySelectorAll('#adModeSeg button').forEach(b=>b.onclick=()=>{ d.mode=b.dataset.md; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b)); });
+  const bump=delta=>{ const h=$('#adTemp'); let t=Math.max(TEMP_MIN,Math.min(TEMP_MAX,(+h.value||24)+delta)); h.value=t; d.temp=t; const lab=$('#adTempV'); if(lab) lab.textContent=t+'°'; };
+  $('#adTempUp') && ($('#adTempUp').onclick=()=>bump(1));
+  $('#adTempDn') && ($('#adTempDn').onclick=()=>bump(-1));
+  $('#adAdd').onclick=()=>{ sync(); captureDraft(); const a=buildAction(_actDraft,T); if(!a){ toast('אין יעד לבחור לפעולה הזו'); return; } ed.actions=ed.actions||[]; ed.actions.push(a); rerender(m); };
+  m.querySelectorAll('[data-actdel]').forEach(b=>b.onclick=()=>{ sync(); ed.actions.splice(+b.dataset.actdel,1); rerender(m); });
+}
+function renderSceneEditor(m){
+  const ed=_sceneEdit;
+  m.innerHTML = `<div class="scenes-wrap scene-edit">
+    <div class="field"><label>שם התרחיש</label><input id="scName" value="${esc(ed.name||'')}" placeholder="למשל: ערב · יציאה מהבית · שינה" autocomplete="off"></div>
+    ${actionsBlockHtml(ed, 'פעולות בתרחיש')}
+    <div class="sc-actions"><button class="btn" id="scCancel">ביטול</button><button class="btn primary" id="scSave">שמור תרחיש</button></div>
+  </div>`;
+  const sync=()=>{ const n=$('#scName'); if(n) ed.name=n.value; };
+  bindActionsBlock(m, ed, sync, renderSceneEditor);
+  $('#scCancel').onclick=()=>{ _sceneEdit=null; _actDraft=null; render(); };
+  $('#scSave').onclick=async(ev)=>{
+    const name=($('#scName').value||'').trim(); if(!name){ toast('תן שם לתרחיש'); return; }
+    if(!(ed.actions||[]).length){ toast('הוסף לפחות פעולה אחת'); return; }
+    const btn=ev.currentTarget; if(btn.disabled) return; btn.disabled=true; btn.textContent='שומר…';
+    try{
+      if(ed.id) await Backend.updateScene(ed.id,{ name, actions:ed.actions });
+      else      await Backend.createScene(P._server.id, name, ed.actions);
+      _sceneEdit=null; _actDraft=null; toast('התרחיש נשמר ✅'); await loadScenes(); render();
+    }catch(e){ toast('שמירה נכשלה: '+e.message,5000); btn.disabled=false; btn.textContent='שמור תרחיש'; }
+  };
+}
+
+/* ───────── Automations (אוטומציות) — run a scene at a time, executed on the EG scheduler ─────────
+   The EG (Philips Dynalite Ethernet Gateway) has a native 40-slot scheduler reached over the LOCAL
+   network via WebPage.cgi. On save (local only) the app compiles the chosen scene into EG tasks and
+   writes an enabled schedule to a free slot; it then runs 24/7 on the EG, phone or not. */
+const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+const DOW_HE = ['א','ב','ג','ד','ה','ו','ש'];   // index 0..6 = Sunday..Saturday (JS getDay / EG FDOW)
+let _autos = [];
+let _autoEdit = null;
+let _confirmDelA = null;
+let _scTab = 'scenes';   // 'scenes' | 'autos'
+async function loadAutomations(){ if(!P||!P._server){ _autos=[]; return; } try{ _autos = await Backend.listAutomations(P._server.id); }catch(e){} }
+
+// ── EG scheduler client (local network) ──
+const EG = {
+  async read(){
+    const t = await gwFetch('/WebPage.cgi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ request:{ main:'scheduler', sub:'schedules', find:'all' } }) });
+    const j = JSON.parse(t); return [].concat((j.reply && j.reply.value) || []);
+  },
+  async write(sched){
+    const body = { update:{ main:'scheduler', sub:'schedules', find:'Id', range:[sched.Id, sched.Id], value:[sched] } };
+    const t = await gwFetch('/WebPage.cgi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const j = JSON.parse(t); if(!(j.reply && j.reply.ack)) throw new Error('ה-EG דחה את הכתיבה'); return true;
+  }
+};
+// A blank (disabled, no actions) EG schedule object for a given slot id — used to build or clear a slot.
+function egBlank(id){
+  return { Id:id, Name:'Undefined Schedule', Enabled:false, Type:false,
+    FDOW:[1,1,1,1,1,1,1], FDOM:Array(31).fill(1), FWOM:[0,1,1,1,1,1], FMOY:Array(12).fill(1), FPH:'IgnAll',
+    SpecialInc:[], SpecialExc:[], ADate:{ SDate:[2019,12,4], TDisable:true, TDate:[2019,12,4], EDate:[9999,12,31], EDisable:true },
+    SEvent:{ Type:false, AstOffset:false, AstRef:false, Time:[9,0,0], TaskList:[] },
+    TEvent:{ Enabled:false, Time:[0,0,0], TaskList:[] },
+    EEvent:{ Type:false, AstOffset:false, AstRef:false, Time:[23,59,59], TaskList:[] } };
+}
+// Linear % → EG channel level byte (0..255). Direction verified against the site (255 = full).
+const PCT_TO_CHLEVEL = pct => Math.round(Math.max(0, Math.min(100, pct)) * 255 / 100);
+// Compile a scene's actions into EG scheduler tasks (lights + covers; A/C is skipped — not on the DyNet bus).
+function sceneToEgTasks(scene){
+  const tasks = [];
+  for(const ac of (scene.actions||[])){
+    if(ac.t==='light'){
+      const a = P.areas[ac.area]; if(!a) continue;
+      const chans = ac.ch ? [ac.ch] : a.channels.map(c=>c.id);
+      for(const ch of chans){
+        const c = a.channels.find(x=>x.id===ch); const sw = c && isSwitch(c);
+        tasks.push({ type:171, opc:16, subopc:2, mask:255, area:ac.area, join:255, channel:ch, chLevel:PCT_TO_CHLEVEL(ac.pct), fadeMs: sw?0:2000 });
+      }
+    } else if(ac.t==='cover'){
+      tasks.push({ type:171, opc:1, mask:255, area:ac.area, join:255, preset: ac.act==='open'?1 : ac.act==='close'?2 : 4, fadeMs:0 });
+      // a cover's "stop after delay" can't ride a single EG event — it applies only when the scene is run by tap
+    }
+    // ac → skipped
+  }
+  return tasks;
+}
+// Build the EG schedule object for an automation + its combined action list in a given slot.
+function autoToSchedule(auto, actions, slotId){
+  const s = egBlank(slotId);
+  s.Name = (auto.name||'').slice(0,40) || 'אוטומציה';
+  s.Enabled = !!auto.enabled;
+  const parts = String(auto.time||'09:00').split(':');
+  s.SEvent.Time = [ (+parts[0]||0), (+parts[1]||0), 0 ];
+  const days = (auto.days && auto.days.length) ? auto.days : [0,1,2,3,4,5,6];
+  s.FDOW = [0,1,2,3,4,5,6].map(d => days.indexOf(d)>=0 ? 1 : 0);
+  s.SEvent.TaskList = sceneToEgTasks({ actions: actions||[] });
+  return s;
+}
+// Pick a free EG slot (disabled, empty, still named "Undefined Schedule") not already used by our automations.
+function egAllocSlot(scheds){
+  const used = new Set(_autos.map(a=>a.eg_slot).filter(x=>x!=null));
+  for(const s of scheds){
+    if(used.has(s.Id)) continue;
+    const empty = !s.Enabled && (!s.SEvent || !s.SEvent.TaskList || !s.SEvent.TaskList.length) && /^Undefined Schedule$/.test(s.Name||'');
+    if(empty) return s.Id;
+  }
+  return null;
+}
+function renderAutos(m){
+  const box = $('#autoBody'); if(!box) return;
+  const local = cfg.activeConn==='local';
+  const gate = local ? '' : `<div class="note auto-gate">עריכת אוטומציות אפשרית רק כשאתה מחובר ל<b>רשת המקומית</b> (באתר). כרגע החיבור חיצוני — צפייה בלבד.</div>`;
+  box.innerHTML = `<div class="scenes-head"><div><h2>אוטומציות</h2><div class="note">הפעלת תרחיש בשעה קבועה — רץ על ה-EG, גם כשהטלפון כבוי.</div></div>${local?'<button class="btn primary" id="auNew">+ חדשה</button>':''}</div>
+    ${gate}<div class="scene-list" id="autoList"><div class="note">טוען…</div></div>`;
+  $('#auNew') && ($('#auNew').onclick = () => { _autoEdit = { name:'', scene_id:null, time:'09:00', days:[], enabled:true, actions:[] }; _actDraft=null; _confirmDelA=null; render(); });
+  Promise.all([loadScenes(), loadAutomations()]).then(() => drawAutoList(local))
+    .catch(e => { const el=$('#autoList'); if(el) el.innerHTML = `<div class="empty">טעינה נכשלה: ${esc(e.message)}</div>`; });
+}
+const daysLabel = days => (!days || !days.length) ? 'כל יום' : days.slice().sort().map(d=>DOW_HE[d]).join('·');
+function autoCard(a, local){
+  if(_confirmDelA===a.id){
+    return `<div class="scene-card confirm"><span class="sc-nm">למחוק את „${esc(a.name)}”?</span>
+      <div class="scene-ops" style="flex-direction:row"><button class="btn scbtn" data-adelno="${a.id}">ביטול</button><button class="btn scbtn danger" data-adelyes="${a.id}">מחק</button></div></div>`;
+  }
+  const sc = a.scene_id ? _scenes.find(s=>s.id===a.scene_id) : null;
+  const bits=[]; if(a.scene_id) bits.push(sc?esc(sc.name):'תרחיש נמחק'); if((a.actions||[]).length) bits.push(a.actions.length+' פעולות');
+  const what = bits.join(' + ') || '—';
+  return `<div class="scene-card">
+    <div class="scene-run auto-run${a.enabled?'':' off'}"><span class="sc-ic">${CLOCK_SVG}</span>
+      <span class="sc-txt"><span class="sc-nm">${esc(a.name)}</span>
+        <span class="sc-meta">${esc(a.time)} · ${daysLabel(a.days)} · ${what}${a.enabled?'':' · כבוי'}</span></span></div>
+    ${local?`<div class="scene-ops"><button class="iconbtn" data-aedit="${a.id}" aria-label="ערוך">${EDIT_SVG}</button><button class="iconbtn" data-adel="${a.id}" aria-label="מחק">${TRASH_SVG}</button></div>`:''}
+  </div>`;
+}
+function drawAutoList(local){
+  const box = $('#autoList'); if(!box) return;
+  box.innerHTML = _autos.map(a=>autoCard(a,local)).join('') || `<div class="empty">אין אוטומציות עדיין.${local?'':' התחבר ברשת המקומית כדי להוסיף.'}</div>`;
+  box.querySelectorAll('[data-aedit]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.aedit); if(a){ _autoEdit=JSON.parse(JSON.stringify(a)); _autoEdit.actions=_autoEdit.actions||[]; _actDraft=null; _confirmDelA=null; render(); } });
+  box.querySelectorAll('[data-adel]').forEach(b=>b.onclick=()=>{ _confirmDelA=b.dataset.adel; drawAutoList(local); });
+  box.querySelectorAll('[data-adelno]').forEach(b=>b.onclick=()=>{ _confirmDelA=null; drawAutoList(local); });
+  box.querySelectorAll('[data-adelyes]').forEach(b=>b.onclick=()=>{ const a=_autos.find(x=>x.id===b.dataset.adelyes); if(a) autoDelete(a); });
+}
+async function autoDelete(a){
+  try{
+    if(cfg.activeConn==='local' && a.eg_slot!=null){ try{ await EG.write(egBlank(a.eg_slot)); }catch(_){} }
+    await Backend.deleteAutomation(a.id); _autos=_autos.filter(x=>x.id!==a.id); _confirmDelA=null; toast('האוטומציה נמחקה'); render();
+  }catch(e){ toast('מחיקה נכשלה: '+e.message,5000); }
+}
+function renderAutoEditor(m){
+  const ed = _autoEdit; ed.actions = ed.actions || [];
+  const sceneOpts = `<option value="" ${!ed.scene_id?'selected':''}>— ללא תרחיש —</option>` + _scenes.map(s=>`<option value="${s.id}" ${s.id===ed.scene_id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const dayChips = [0,1,2,3,4,5,6].map(d=>`<button type="button" class="daychip" data-day="${d}" aria-pressed="${(ed.days||[]).indexOf(d)>=0}">${DOW_HE[d]}</button>`).join('');
+  m.innerHTML = `<div class="scenes-wrap scene-edit">
+    <div class="field"><label>שם האוטומציה</label><input id="auName" value="${esc(ed.name||'')}" placeholder="למשל: הדלקת כניסה בבוקר" autocomplete="off"></div>
+    <div class="field"><label>הפעל תרחיש <small>(אופציונלי)</small></label><select id="auScene">${sceneOpts}</select></div>
+    <div class="field"><label>שעה</label><input id="auTime" type="time" value="${esc(ed.time||'09:00')}"></div>
+    <div class="field"><label>ימים <small>(ריק = כל יום)</small></label><div class="daychips" id="auDays">${dayChips}</div></div>
+    <label class="chkrow"><input type="checkbox" id="auEnabled" ${ed.enabled?'checked':''}> מופעלת</label>
+    ${actionsBlockHtml(ed, 'פעולות ספציפיות' + (ed.scene_id?' (בנוסף לתרחיש)':''))}
+    <div class="sc-actions"><button class="btn" id="auCancel">ביטול</button><button class="btn primary" id="auSave">שמור</button></div>
+  </div>`;
+  const sync=()=>{ const n=$('#auName'); if(n) ed.name=n.value; const t=$('#auTime'); if(t) ed.time=t.value; const sc=$('#auScene'); if(sc) ed.scene_id=sc.value||null; const en=$('#auEnabled'); if(en) ed.enabled=en.checked; };
+  m.querySelectorAll('#auDays .daychip').forEach(b=>b.onclick=()=>{ const d=+b.dataset.day; ed.days=ed.days||[]; const i=ed.days.indexOf(d); if(i>=0) ed.days.splice(i,1); else ed.days.push(d); b.setAttribute('aria-pressed', ed.days.indexOf(d)>=0); });
+  const scSel=$('#auScene'); if(scSel) scSel.onchange=()=>{ sync(); renderAutoEditor(m); };   // re-render so the actions title reflects the scene
+  bindActionsBlock(m, ed, sync, renderAutoEditor);
+  $('#auCancel').onclick = () => { _autoEdit=null; _actDraft=null; render(); };
+  $('#auSave').onclick = (ev) => saveAutomation(ev);
+}
+async function saveAutomation(ev){
+  const ed = _autoEdit;
+  if(cfg.activeConn!=='local'){ toast('צריך חיבור לרשת המקומית כדי לכתוב ל-EG',5000); return; }
+  const name = ($('#auName').value||'').trim(); if(!name){ toast('תן שם לאוטומציה'); return; }
+  const scene_id = $('#auScene').value || null; const scene = scene_id ? _scenes.find(s=>s.id===scene_id) : null;
+  const time = $('#auTime').value || '09:00';
+  const enabled = $('#auEnabled').checked;
+  const days = (ed.days||[]).slice().sort();
+  const own = ed.actions || [];
+  const combined = [ ...(scene ? (scene.actions||[]) : []), ...own ];
+  if(!combined.length){ toast('בחר תרחיש או הוסף לפחות פעולה אחת'); return; }
+  const btn = ev.currentTarget; if(btn.disabled) return; btn.disabled=true; btn.textContent='כותב ל-EG…';
+  try{
+    const scheds = await EG.read();
+    let slot = (ed.eg_slot!=null) ? ed.eg_slot : egAllocSlot(scheds);
+    if(slot==null) throw new Error('אין סלוט פנוי ב-EG (40 תפוסים)');
+    await EG.write(autoToSchedule({ name, time, days, enabled }, combined, slot));
+    const fields = { name, scene_id, actions:own, time, days, enabled, eg_slot:slot };
+    if(ed.id) await Backend.updateAutomation(ed.id, fields);
+    else      await Backend.createAutomation(P._server.id, fields);
+    _autoEdit=null; _actDraft=null; toast('האוטומציה נשמרה ונכתבה ל-EG ✅'); await loadAutomations(); render();
+  }catch(e){ toast('שמירה נכשלה: '+e.message, 6000); btn.disabled=false; btn.textContent='שמור'; }
+}
 function renderAreas(m){
   if(USER) return renderUserAreas(m);
   const q = route.q || '';
@@ -2492,7 +3058,7 @@ function renderArea(m, a){
       <div class="ct-top"><span class="cic">${chIcon(ch)}</span>
         <button class="toggle" role="switch" aria-checked="false" data-sw="${ch.id}" aria-label="${esc(chName(ch))}"></button></div>
       <div class="ct-nm">${esc(chName(ch))}</div>
-      <div class="ct-foot"><span class="lvl" data-lvl="${ch.id}">—</span></div>
+      <div class="ct-foot">${sw ? '' : `<span class="lvl" data-lvl="${ch.id}">—</span>`}</div>
       ${sw ? '' : `<input type="range" min="0" max="100" step="1" value="0" data-sl="${ch.id}" class="ct-slider" aria-label="${esc(chName(ch))}">`}
     </div>`;
   }).join('');
@@ -2503,7 +3069,7 @@ function renderArea(m, a){
   if(coverList.length){
     const byType = {}; coverList.forEach(s => (byType[s.type]=byType[s.type]||[]).push(s.area));
     sysCard = `<section class="card"><h2><span class="seclbl">מערכות החדר</span></h2>
-      ${Object.keys(byType).map(t => `<div class="sys-group"><div class="sys-grp-t">${esc(sysLabel(t))}</div>${sysTiles(t, byType[t])}</div>`).join('')}</section>`;
+      ${Object.keys(byType).map(t => `<div class="sys-group"><div class="sys-grp-t">${esc(sysLabel(t))}</div>${sysTiles(t, byType[t], areaName(a))}</div>`).join('')}</section>`;
   }
   // A/C: CoolMaster units mapped to this room (by the technician), controlled directly.
   const cmUnits = (USER && acIncluded()) ? CM.unitsForRoom(a.id) : [];
@@ -3454,6 +4020,23 @@ async function dbxApi(ep, args){
   if(!r.ok) throw new Error('Dropbox '+r.status+': '+(await r.text()).slice(0,120)); return r.json();
 }
 const dbxArg = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'));
+// Resolve the "dynalite" folder so searches look only inside it, not the whole Dropbox.
+// Cached per session; returns its path_lower (e.g. "/dynalite"), or '' if no such folder exists.
+let _dbxRoot;
+async function dbxDynaliteRoot(){
+  if(_dbxRoot !== undefined) return _dbxRoot;
+  try{
+    const top = await dbxApi('files/list_folder', { path:'', limit:500 });
+    let hit = (top.entries||[]).find(e => e['.tag']==='folder' && /^dynalite$/i.test(e.name||''));
+    if(!hit){   // not at the root — look anywhere in the account
+      const sr = await dbxApi('files/search_v2', { query:'dynalite', options:{ max_results:100, file_status:'active', filename_only:true } });
+      hit = (sr.matches||[]).map(m => m.metadata && m.metadata.metadata)
+        .find(md => md && md['.tag']==='folder' && /^dynalite$/i.test(md.name||''));
+    }
+    _dbxRoot = hit ? (hit.path_lower || '') : '';
+  }catch(e){ _dbxRoot = ''; }
+  return _dbxRoot;
+}
 // Sort key for a Dropbox file: the date written in its name (DD-MM-YY / DD-MM-YYYY, any of - . / _ or
 // space as separator), as a timestamp. Falls back to the file's modified time when the name has no date.
 function fileDateKey(e){
@@ -3503,7 +4086,7 @@ async function dbxBrowse(path){
     });
     const up = path ? path.slice(0, path.lastIndexOf('/')) : null;
     pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="dbxq" type="search" placeholder="חיפוש קובץ DLJ בכל Dropbox" autocomplete="off"></div>
+      <input id="dbxq" type="search" placeholder="חיפוש בתוך תיקיית dynalite" autocomplete="off"></div>
       <div class="note mono" style="direction:ltr;text-align:left">${esc(path||'/')}</div>
       <div class="dbx-list">
       ${up!==null ? `<button data-dir="${esc(up)}">↩ תיקייה למעלה</button>` : ''}
@@ -3516,12 +4099,16 @@ async function dbxBrowse(path){
 async function dbxSearch(q, backTo){
   const pane = $('#dbxPane'); if(!pane) return;
   try{
-    const res = await dbxApi('files/search_v2', { query:q, options:{ max_results:100, file_status:'active', filename_only:true } });
+    const root = await dbxDynaliteRoot();
+    const opts = { max_results:100, file_status:'active', filename_only:true };
+    if(root) opts.path = root;                 // search only inside the "dynalite" folder
+    const res = await dbxApi('files/search_v2', { query:q, options:opts });
     const seen = {};
     const folders = (res.matches||[]).map(m => m.metadata && m.metadata.metadata)
-      .filter(md => md && md['.tag']==='folder' && md.path_lower && !seen[md.path_lower] && (seen[md.path_lower]=1));
+      .filter(md => md && md['.tag']==='folder' && md.path_lower && !seen[md.path_lower] && (seen[md.path_lower]=1))
+      .filter(md => !root || md.path_lower.startsWith(root + '/') || md.path_lower === root);
     pane.innerHTML = `<div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="dbxq" type="search" placeholder="חיפוש תיקייה בכל Dropbox" value="${esc(q)}" autocomplete="off"></div>
+      <input id="dbxq" type="search" placeholder="חיפוש תיקייה בתוך dynalite" value="${esc(q)}" autocomplete="off"></div>
       <div class="dbx-list">
       <button data-back="${esc(backTo)}">↩ חזרה לעיון בתיקיות</button>
       ${folders.map(md => `<button data-dir="${esc(md.path_lower)}">📁 ${esc(md.name)}<br><span class="note mono" style="direction:ltr;font-size:11px">${esc(md.path_display||'')}</span></button>`).join('') || '<div class="empty">לא נמצאו תיקיות.</div>'}</div>`;
@@ -3683,7 +4270,16 @@ async function dbxSaveAs(name){
 }
 
 /* ───────── boot ───────── */
-if(USER){ document.body.classList.add('role-user'); document.querySelectorAll('nav.tabs button[data-tab="devices"], nav.tabs button[data-tab="log"]').forEach(b => b.remove()); const g=document.querySelector('nav.tabs .in'); if(g) g.style.gridTemplateColumns='repeat(2,1fr)'; }
+if(USER){ document.body.classList.add('role-user'); document.querySelectorAll('nav.tabs button[data-tab="devices"], nav.tabs button[data-tab="log"]').forEach(b => b.remove());
+  const g=document.querySelector('nav.tabs .in');
+  if(g && !g.querySelector('[data-tab="scenes"]')){   // add a Scenes tab between Areas and Settings
+    const setupBtn=g.querySelector('[data-tab="setup"]');
+    const sc=document.createElement('button'); sc.dataset.tab='scenes';
+    sc.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.1 4.3 4.7.7-3.4 3.3.8 4.7L12 18l-4.2 2.2.8-4.7L5.2 8l4.7-.7z"/></svg>תרחישים';
+    g.insertBefore(sc, setupBtn);
+    g.style.gridTemplateColumns='repeat(3,1fr)';
+  } else if(g){ g.style.gridTemplateColumns='repeat(2,1fr)'; }
+}
 document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab==='areas' ? { tab:'areas', area:lastArea } : { tab:b.dataset.tab })));
 $('#backBtn').addEventListener('click', () => { lastArea = null; go({ tab:'areas', area:null }); });   // back = out to the room list
 $('#linkChip').addEventListener('click', () => go({ tab:'setup' }));
@@ -3741,7 +4337,7 @@ async function userLoadProject(){
   // more than one assigned → let the user choose
   uov(`${uBrand}<h2>בחר פרויקט</h2><div class="uov-note">שויכו אליך כמה פרויקטים.</div><div id="uplist" class="uov-list"></div>`);
   const list=$('#uplist');
-  projs.forEach(p=>{ const b=document.createElement('button'); b.className='btn'; b.style.width='100%'; b.textContent=p.name; b.onclick=()=>userOpenProject(p); list.appendChild(b); });
+  projs.forEach(p=>{ const b=document.createElement('button'); b.className='btn'; b.style.width='100%'; b.textContent=cleanProjName(p.name); b.onclick=()=>userOpenProject(p); list.appendChild(b); });
   const out=document.createElement('button'); out.className='btn ghost'; out.style.marginTop='10px'; out.textContent='התנתק'; out.onclick=async()=>{ await Backend.signOut(); location.reload(); }; list.appendChild(out);
 }
 function userNoProject(){
@@ -3772,6 +4368,7 @@ async function userOpenProject(proj){
     P._server = { id:proj.id, version:proj.version||1 };
     render(); connect(); startNetCheck();
     startUserSync(proj.id);
+    loadScenes().then(() => { if(route.tab==='areas' && route.area==null) render(); });   // fill the quick-run strip
   }catch(e){ userError('טעינת הפרויקט נכשלה: '+e.message); }
 }
 // Apply the technician-set connection (from the project config) to the user app's settings.
@@ -3785,12 +4382,17 @@ function applyUserConn(tech, parsed){
   cfg.conn = 'auto';
   saveCfg();
 }
-let _userSync=null;
+let _userSync=null, _syncTick=0;
 function startUserSync(projectId){
   if(_userSync) clearInterval(_userSync);
+  _syncTick=0;
   _userSync=setInterval(async()=>{
     if(!P || !P._server || document.querySelector('.modal-ov')) return;
-    try{ const v=await Backend.projectVersion(projectId);
+    try{
+      // Every ~3 minutes, ask the server to pull the newest .dlj from the tracked Dropbox folder, so a new
+      // or re-saved file is detected on its own — no technician needed. The version check below then re-pulls it.
+      if((++_syncTick % 6)===0){ try{ await Backend.syncDropbox(projectId); }catch(_){} }
+      const v=await Backend.projectVersion(projectId);
       if(v!=null && P._server && v!==P._server.version){
         const projs=await Backend.assignedProjects(); const proj=projs.find(x=>x.id===projectId);
         if(proj){ const buf=await Backend.downloadBlob(projectId); const parsed=await DLJ.parseDljBuffer(buf, proj.file_name||'project.dlj');
