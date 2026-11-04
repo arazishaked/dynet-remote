@@ -1547,7 +1547,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1104-0850";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1104-0948";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -3799,21 +3799,29 @@ async function pollDevice(duid){
   if(!isUp() || confOff) return;
   const dv = P && P.devices[duid]; if(!dv || !dv.channels) return;
   const map = P.physMap[duid] || {};
-  const seen = new Set(), pairs = [];
-  for(let n=0;n<dv.channels;n++) for(const [aid,cid] of (map[n]||[])){
-    if(aid===1) continue;                                 // unassigned outputs
-    const k=aid+':'+cid; if(seen.has(k)) continue; seen.add(k); pairs.push([aid,cid]);
+  // Map each PHYSICAL output (1-based) to the logical area/channel it drives, so we can both read the
+  // level (same HTTP path that works when entering a room) and light up the physical-output display.
+  const outs = [];
+  for(let n=0;n<dv.channels;n++){
+    const tgt = (map[n]||[]).find(t => t[0]!==1);          // first real (non-unassigned) target
+    if(tgt) outs.push({ phys:n+1, aid:tgt[0], cid:tgt[1] });
   }
-  if(!pairs.length) return;
-  logPush('tx', `סנכרון בקר „${dv.name||'ללא שם'}” — בקשת רמות (${pairs.length} ערוצים)`);
-  for(const [aid,cid] of pairs){
-    if(!openDevs.has(duid)) break;                        // user collapsed the controller — stop polling
-    try{
-      const t = await gwFetch(`/GetDyNet.cgi?a=${aid}&c=${cid}&_=${Date.now()}`, { quiet:true });
-      const v = num(t);
+  if(!outs.length) return;
+  logPush('tx', `סנכרון בקר „${dv.name||'ללא שם'}” — בקשת רמות (${outs.length} יציאות)`);
+  const seen = {};                                          // cache per logical channel → read each once
+  for(const o of outs){
+    if(!openDevs.has(duid)) break;                          // user collapsed the controller — stop
+    const k = o.aid+':'+o.cid;
+    let v = seen[k];
+    if(v===undefined){
+      try{
+        const t = await gwFetch(`/GetDyNet.cgi?a=${o.aid}&c=${o.cid}&_=${Date.now()}`, { quiet:true });
+        v = num(t); seen[k] = v;
+      }catch(e){ confOff = true; break; }
       // Don't clobber a channel the user just drove (still fading).
-      if(!isNaN(v) && Date.now()-(touched[aid+':'+cid]||0) > 3000) setLive(aid, { level:[cid, v] });
-    }catch(e){ confOff = true; break; }
+      if(!isNaN(v) && Date.now()-(touched[k]||0) > 3000) setLive(o.aid, { level:[o.cid, v] });
+    }
+    if(!isNaN(v)) setOut(duid, o.phys, v);                  // physical-output display (devOut) — "which output is on"
   }
 }
 // A device-location folder was opened — refresh any controllers already expanded inside it.
