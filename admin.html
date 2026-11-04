@@ -856,6 +856,26 @@ const Backend = {
     if(error) throw new Error(error.message);
     return true;
   },
+  // Technician: send a reset email to any user (self-service recovery).
+  async adminSendReset(email){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.auth.resetPasswordForEmail((email||'').trim());
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  // Technician: set a user's password directly (goes through the secure admin-users Edge Function,
+  // which verifies the caller is a technician before using the admin API).
+  async adminSetPassword(userId, newPassword){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.functions.invoke('admin-users', { body:{ action:'set_password', user_id:userId, new_password:newPassword } });
+    if(error){
+      let msg=error.message;
+      try{ const ctx=await error.context?.json?.(); if(ctx&&ctx.error) msg=ctx.error; }catch(_){}
+      throw new Error(msg);
+    }
+    if(data && data.error) throw new Error(data.error);
+    return true;
+  },
   // Set a new password (used after the user follows the reset link / while signed in).
   async updatePassword(newPassword){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
@@ -1348,6 +1368,9 @@ function renderDash(){
   if(state.sel){ const det=el('div'); det.id='detail'; app.insertBefore(det, foot); renderDetail(); }
 }
 
+// Format a UTC timestamp from Supabase in Israel local time (so it matches the technician's clock
+// regardless of the device's own timezone). '—' when there is no value yet.
+function fmtIL(ts){ if(!ts) return '—'; try{ return new Date(ts).toLocaleString('he-IL',{ timeZone:'Asia/Jerusalem', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }catch(e){ return '—'; } }
 function fillPlist(pl){
   pl.innerHTML='';
   const q = (state.q||'').trim().toLowerCase();
@@ -1357,7 +1380,8 @@ function fillPlist(pl){
   rows.forEach(p=>{
     const it = el('div','item proj-sel');
     it.setAttribute('aria-selected', state.sel && state.sel.id===p.id);
-    it.innerHTML = `<div class="nm"><b>${esc(p.name)}</b><small>${p.file_name?esc(p.file_name):'אין קובץ עדיין'} · גרסה ${p.version||1}</small></div>`;
+    it.innerHTML = `<div class="nm"><b>${esc(p.name)}</b><small>${p.file_name?esc(p.file_name):'אין קובץ עדיין'} · גרסה ${p.version||1}</small>`
+      + `<small style="margin-top:3px;color:var(--accent-text)">🕒 עודכן אוטומטית: ${fmtIL(p.updated_at)} <span style="color:var(--muted)">· 🔄 נבדק: ${fmtIL(p.last_sync)}</span></small></div>`;
     it.onclick = ()=> selectProject(p);
     pl.appendChild(it);
   });
@@ -1727,10 +1751,34 @@ async function loadUsers(uc, p){
   if(!assigned.length) ulist.appendChild(el('div','note','אין עדיין משתמשים משויכים.'));
   assigned.forEach(a=>{
     const prof=a.profiles||{};
-    const it=el('div','item');
+    const it=el('div','item'); it.style.flexWrap='wrap';
     it.innerHTML = `<div class="nm"><b>${esc(prof.full_name||prof.email||a.user_id)}</b><small>${esc(prof.email||'')}</small></div>
-      <button class="btn danger sm">הסר</button>`;
-    it.querySelector('button').onclick=async()=>{ try{ await Backend.unassign(a.id); toast('הוסר'); loadUsers(uc,p); }catch(e){ toast(e.message,5000); } };
+      <div class="urow-acts" style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn ghost sm" data-reset>שלח איפוס</button>
+        <button class="btn ghost sm" data-setpw>קבע סיסמה</button>
+        <button class="btn danger sm" data-remove>הסר</button>
+      </div>
+      <div class="pw-edit" style="display:none;width:100%;gap:6px;margin-top:8px;align-items:center">
+        <input type="text" class="pw-inp" placeholder="סיסמה חדשה (לפחות 6 תווים)" autocomplete="off"
+          style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:10px;color:var(--fg);padding:9px 11px;font-size:14px">
+        <button class="btn primary sm" data-pwsave>שמור</button>
+        <button class="btn ghost sm" data-pwcancel>ביטול</button>
+      </div>`;
+    const pwEdit=it.querySelector('.pw-edit'), pwInp=it.querySelector('.pw-inp');
+    it.querySelector('[data-remove]').onclick=async()=>{ try{ await Backend.unassign(a.id); toast('הוסר'); loadUsers(uc,p); }catch(e){ toast(e.message,5000); } };
+    it.querySelector('[data-reset]').onclick=async e=>{ e.target.disabled=true;
+      try{ await Backend.adminSendReset(prof.email); toast('נשלח מייל איפוס אל '+(prof.email||'')+' ✅',5000); }
+      catch(err){ toast('שליחה נכשלה: '+err.message,6000); } e.target.disabled=false; };
+    it.querySelector('[data-setpw]').onclick=()=>{ pwEdit.style.display=pwEdit.style.display==='none'?'flex':'none'; if(pwEdit.style.display==='flex') pwInp.focus(); };
+    it.querySelector('[data-pwcancel]').onclick=()=>{ pwInp.value=''; pwEdit.style.display='none'; };
+    it.querySelector('[data-pwsave]').onclick=async e=>{
+      const pw=(pwInp.value||'').trim();
+      if(pw.length<6){ toast('הסיסמה חייבת להיות לפחות 6 תווים',4000); return; }
+      e.target.disabled=true;
+      try{ await Backend.adminSetPassword(a.user_id, pw); toast('הסיסמה שונתה ל: '+pw+' — מסור אותה למשתמש',7000); pwInp.value=''; pwEdit.style.display='none'; }
+      catch(err){ toast('שינוי נכשל: '+err.message,6000); }
+      e.target.disabled=false;
+    };
     ulist.appendChild(it);
   });
   const assignedIds = new Set(assigned.map(a=>a.user_id));
