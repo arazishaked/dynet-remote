@@ -1547,7 +1547,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1104-1039";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1104-1116";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2264,7 +2264,24 @@ async function connect(){
 }
 /* Live DyNet traffic from the PDEG: wall switches, other apps, System Builder */
 const tcp = { running:false, state:'off' };
+let seenRound = null;   // during a sign-on window: the Set of devKeys that have replied
+// Presence detection: any frame that resolves to a known device proves that device is alive.
+// Sign-on replies arrive here (through tcpListen), and so does ordinary live traffic.
+function markSeen(b){
+  if(!P) return; let dv=null;
+  if(b[0]===0x5C){
+    if(b[1]===0xDC && b[3]!==0x92) return;           // PDEG heartbeat/sync — not a controller reply
+    dv = P.deviceOrder.map(d=>P.devices[d]).find(d=>d.dcode===b[1] && d.box===b[2]);
+  } else if(b[0]===0xAC){
+    const sBox=(b[4]<<8)|b[5];                        // DyNet2 source box (the replying device)
+    dv = P.deviceOrder.map(d=>P.devices[d]).find(d=>d.box===sBox);
+  }
+  if(!dv) return; const k=devKey(dv); if(!k) return;
+  if(seenRound) seenRound.add(k);
+  if(devStatus[k]!=='online'){ devStatus[k]='online'; refreshDevStatusUI(); }
+}
 const rxFrame = FrameReader(fr => {
+  markSeen(fr);                                       // sign-on reply / live traffic ⇒ device is online
   noteBusProto(fr);                                  // learn DyNet1 vs DyNet2 from live traffic
   const d = DyNet.decode(fr);
   if(d.skip) return;                                 // PDEG housekeeping — don't clutter the log
@@ -3779,8 +3796,8 @@ function renderDevices(m){
   m.querySelectorAll('[data-flashfull]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); flashDevice(b.dataset.flashfull, 'full'); }));
   $('#stRefresh').addEventListener('click', async () => {
     const btn=$('#stRefresh'); if(btn){ btn.disabled=true; btn.textContent='בודק…'; }
-    try{ await GW.deviceStatus(); renderDevices(m); }
-    catch(e){ toast('בדיקת הסטטוס נכשלה: '+e.message, 6000); if(btn){ btn.disabled=false; btn.textContent='🔄 בדוק שוב'; } }
+    try{ await signOn(true); }                       // sends DyNet sign-on per device, then re-renders
+    catch(e){ toast('בדיקת הסטטוס נכשלה: '+e.message, 6000); const b2=$('#stRefresh'); if(b2){ b2.disabled=false; b2.textContent='🔄 בדוק שוב'; } }
   });
   m.querySelectorAll('[data-stfilter]').forEach(b => b.addEventListener('click', () => { route.devFilter = route.devFilter===b.dataset.stfilter ? null : b.dataset.stfilter; renderDevices(m); }));
   $('#stClear') && $('#stClear').addEventListener('click', () => { route.devFilter=null; renderDevices(m); });
@@ -3793,20 +3810,48 @@ function refreshDevStatusUI(){
   const onB = document.querySelector('[data-stfilter="online"] b'); if(onB) onB.textContent = on;
   const offB = document.querySelector('[data-stfilter="offline"] b'); if(offB) offB.textContent = off;
 }
-// Sign-on check: read the controllers' online/offline status from the gateway (device_status) and refresh
-// the dots + counts. Runs automatically on connecting to a project, and from the "בדוק שוב" button.
-async function signOn(announce){
-  if(cfg.mode!=='pdeg' && cfg.mode!=='sim') return;
-  try{
-    const had = document.querySelector('[data-stfilter]');
-    await GW.deviceStatus();
-    if(route.tab==='devices' && !had) renderDevices($('#main'));   // first data → build the summary pills
-    else refreshDevStatusUI();                                     // otherwise update dots/counts in place
-    if(announce) toast('בדיקת תקשורת הושלמה', 2500);
-  }catch(e){ if(announce) toast('בדיקת תקשורת נכשלה: '+e.message, 5000); }
+// Send a DyNet "Device Sign-on" (opcode 0x80) to every controller and panel — exactly the packet
+// System Builder's Sign-on sends (5C <dcode> <box> 80 00 00 00 <cs>), one per device. Devices that
+// reply are marked online by markSeen() via the live TCP listener.
+async function signOnTCP(){
+  if(!HAS_TCP || cfg.mode!=='pdeg' || !P) return [];
+  const devs = P.deviceOrder.map(d=>P.devices[d]).filter(d=>d.dcode!=null);
+  for(const d of devs){
+    const fr = DyNet.frame([0x5C, d.dcode, d.box, 0x80, 0, 0, 0]);
+    await native({ kind:'tcpSend', host:tcpHost(), port:cfg.tcpPort, b64:u8ToB64(fr) });
+    await sleep(22);                                                 // pace the bus so nothing is dropped
+  }
+  return devs;
 }
-// On connect, controllers may report a moment after the link comes up — read a few times.
-function signOnBurst(){ signOn(); setTimeout(()=>signOn(), 2500); setTimeout(()=>signOn(), 6000); }
+// Sign-on check: find which controllers/panels are online. On real hardware this sends the DyNet
+// sign-on packet per device and waits for replies; in the simulator it uses the fake device_status feed.
+// Runs automatically on connecting to a project, and from the "בדוק שוב" button.
+async function signOn(announce){
+  if(cfg.mode==='sim'){
+    try{
+      const had = document.querySelector('[data-stfilter]');
+      await GW.deviceStatus();
+      if(route.tab==='devices' && !had) renderDevices($('#main')); else refreshDevStatusUI();
+      if(announce) toast('בדיקת תקשורת הושלמה', 2500);
+    }catch(e){ if(announce) toast('בדיקת תקשורת נכשלה: '+e.message, 5000); }
+    return;
+  }
+  if(cfg.mode!=='pdeg' || !HAS_TCP || !P) return;
+  const devs = P.deviceOrder.map(d=>P.devices[d]).filter(d=>d.dcode!=null);
+  if(!devs.length) return;
+  seenRound = new Set();                                             // collect who answers this round
+  const had = document.querySelector('[data-stfilter]');
+  if(route.tab==='devices' && !had) renderDevices($('#main'));       // show the "checking…" card immediately
+  try{ await signOnTCP(); }catch(e){ seenRound=null; if(announce) toast('שליחת sign-on נכשלה: '+e.message, 5000); return; }
+  await sleep(2600);                                                 // let the replies arrive (via tcpListen → markSeen)
+  const round = seenRound; seenRound = null;
+  for(const d of devs){ const k=devKey(d); if(k && !round.has(k)) devStatus[k]='offline'; }  // no reply ⇒ offline
+  if(route.tab==='devices') renderDevices($('#main')); else refreshDevStatusUI();
+  if(announce){ const on=devs.filter(d=>devStatus[devKey(d)]==='online').length;
+                toast(`בדיקת תקשורת הושלמה · ${on}/${devs.length} מחוברים`, 3000); }
+}
+// On connect, kick off a sign-on (signOn already waits for replies and sweeps the non-responders to offline).
+function signOnBurst(){ signOn(); }
 function toggleOutput(t){
   const [duid, ch] = t.dataset.phys.split(':'); const dv = P.devices[duid];
   const on = t.getAttribute('aria-checked')!=='true';
