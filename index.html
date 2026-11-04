@@ -1327,6 +1327,26 @@ const Backend = {
     if(error) throw new Error(error.message);
     return true;
   },
+  // Technician: send a reset email to any user (self-service recovery).
+  async adminSendReset(email){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { error } = await sb.auth.resetPasswordForEmail((email||'').trim());
+    if(error) throw new Error(error.message);
+    return true;
+  },
+  // Technician: set a user's password directly (goes through the secure admin-users Edge Function,
+  // which verifies the caller is a technician before using the admin API).
+  async adminSetPassword(userId, newPassword){
+    const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
+    const { data, error } = await sb.functions.invoke('admin-users', { body:{ action:'set_password', user_id:userId, new_password:newPassword } });
+    if(error){
+      let msg=error.message;
+      try{ const ctx=await error.context?.json?.(); if(ctx&&ctx.error) msg=ctx.error; }catch(_){}
+      throw new Error(msg);
+    }
+    if(data && data.error) throw new Error(data.error);
+    return true;
+  },
   // Set a new password (used after the user follows the reset link / while signed in).
   async updatePassword(newPassword){
     const sb = sbClient(); if(!sb) throw new Error('השרת לא זמין');
@@ -1527,7 +1547,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1103-0938";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1104-0850";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -3771,8 +3791,36 @@ function toggleOutput(t){
   const on = t.getAttribute('aria-checked')!=='true';
   act(GW.physical(dv, +ch, on?100:0));
 }
-async function pollDevice(){}
-function pollDevicesIn(){}
+// When a controller is opened in the Devices tab, read the CURRENT level of every channel it drives
+// (DyNet "request channel level"), so its outputs show the real on/off / dim state. Works for any
+// controller kind (DALI, dimmer/load, relay) — it follows the physical-output → area/channel map.
+async function pollDevice(duid){
+  if(cfg.mode!=='pdeg' && cfg.mode!=='sim') return;
+  if(!isUp() || confOff) return;
+  const dv = P && P.devices[duid]; if(!dv || !dv.channels) return;
+  const map = P.physMap[duid] || {};
+  const seen = new Set(), pairs = [];
+  for(let n=0;n<dv.channels;n++) for(const [aid,cid] of (map[n]||[])){
+    if(aid===1) continue;                                 // unassigned outputs
+    const k=aid+':'+cid; if(seen.has(k)) continue; seen.add(k); pairs.push([aid,cid]);
+  }
+  if(!pairs.length) return;
+  logPush('tx', `סנכרון בקר „${dv.name||'ללא שם'}” — בקשת רמות (${pairs.length} ערוצים)`);
+  for(const [aid,cid] of pairs){
+    if(!openDevs.has(duid)) break;                        // user collapsed the controller — stop polling
+    try{
+      const t = await gwFetch(`/GetDyNet.cgi?a=${aid}&c=${cid}&_=${Date.now()}`, { quiet:true });
+      const v = num(t);
+      // Don't clobber a channel the user just drove (still fading).
+      if(!isNaN(v) && Date.now()-(touched[aid+':'+cid]||0) > 3000) setLive(aid, { level:[cid, v] });
+    }catch(e){ confOff = true; break; }
+  }
+}
+// A device-location folder was opened — refresh any controllers already expanded inside it.
+function pollDevicesIn(groupEl){
+  if(!groupEl) return;
+  groupEl.querySelectorAll('details.dev[open]').forEach(d => pollDevice(d.dataset.duid));
+}
 
 /* Log tab */
 function logHtml(l){ const tag = { tx:'שליחה', rx:'תשובה', err:'שגיאה' }[l.dir]; return `<div class="ln"><span class="d ${l.dir}">${tag}</span><span class="t">${l.t.toLocaleTimeString('he-IL',{hour12:false})}</span><span class="txt">${esc(l.text)}</span>${l.detail?`<span class="hex">${esc(l.detail)}</span>`:''}</div>`; }
