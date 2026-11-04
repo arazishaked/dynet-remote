@@ -1547,7 +1547,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1104-0948";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1104-1039";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -2243,6 +2243,7 @@ async function connect(){
       // the user taps "בדוק עכשיו"; FW/bus info loads when the Settings tab opens (HTTP mode only).
       if(route.area!=null) requestArea(P.areas[route.area], true);   // silently refresh the open room on (re)connect
       tcpListen();
+      if(was!=='on') signOnBurst();   // on a fresh connect, sign-on the controllers/panels and mark online/offline
     } else {
       setLink('err','אין קשר'); logPush('err', 'אין חיבור TCP ל-PDEG: '+((o&&o.error)||''), tcpHost()+':'+cfg.tcpPort);
     }
@@ -2256,7 +2257,7 @@ async function connect(){
     link.info = { id, bus };
     setLink(cfg.mode==='sim'?'sim':'on', cfg.mode==='sim'?'סימולציה':'מחובר');
     logPush('rx', `PDEG ${id.IPv4Addr||''} · FW ${id.FirmwareVersion||''}${bus?' · אפיק DyNet '+bus.Voltage+'V':''}`);
-    GW.deviceStatus().then(()=>{ if(route.tab==='devices') refreshDevStatusUI(); }).catch(()=>{});
+    signOnBurst();   // sign-on the controllers/panels on connect and mark online/offline
     if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main'));
     if(route.area!=null) requestArea(P.areas[route.area], true);
   }catch(e){ setLink('err','אין קשר'); if(route.tab==='setup' && !dbxAwaitingCode) renderSetup($('#main')); }
@@ -3746,8 +3747,8 @@ function renderDevices(m){
     <div class="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="muted"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <input id="dq" type="search" placeholder="חיפוש בקר, מיקום, Box או ערוץ" value="${esc(route.devq||'')}" autocomplete="off"></div>
     ${CAN_PHYS ? '' : `<div class="banner"><span>שליטה ביציאה בודדת זמינה באפליקציה באייפון (Scriptable + a-Shell).</span></div>`}
-    <section class="card"><h2>תקשורת עם הבקרים<span class="sp"></span>${route.devFilter?`<button class="btn sm" id="stClear">הצג הכול</button>`:''}<button class="btn" id="stRefresh">בדוק עכשיו</button></h2>
-      <div class="summary" id="stSummary">${st.length ? `<button class="pill stpill ${route.devFilter==='online'?'on':''}" data-stfilter="online"><span class="sdot" data-st="online"></span><b>${on}</b> מחוברים</button><button class="pill stpill ${route.devFilter==='offline'?'on':''}" data-stfilter="offline"><span class="sdot" data-st="offline"></span><b>${off}</b> לא מגיבים</button><span class="note" style="align-self:center">לחץ כדי לסנן</span>` : `<span class="note">${isUp() ? 'ה-PDEG עדיין לא דיווח סטטוס. לחץ „בדוק עכשיו”, וודא שבמחשב מופעל ניטור ההתקנים (Metrics → Device Online Status) ב-System Builder.' : 'התחבר ל-PDEG כדי לבדוק תקשורת.'}</span>`}</div>
+    <section class="card"><h2>תקשורת עם הבקרים (Sign-On)<span class="sp"></span>${route.devFilter?`<button class="btn sm" id="stClear">הצג הכול</button>`:''}<button class="btn" id="stRefresh">🔄 בדוק שוב</button></h2>
+      <div class="summary" id="stSummary">${st.length ? `<button class="pill stpill ${route.devFilter==='online'?'on':''}" data-stfilter="online"><span class="sdot" data-st="online"></span><b>${on}</b> מחוברים</button><button class="pill stpill ${route.devFilter==='offline'?'on':''}" data-stfilter="offline"><span class="sdot" data-st="offline"></span><b>${off}</b> לא מגיבים</button><span class="note" style="align-self:center">לחץ כדי לראות את הרשימה</span>` : `<span class="note">${isUp() ? 'בודק תקשורת… אם לא מופיע סטטוס, ודא שב-System Builder מופעל ניטור ההתקנים (Metrics → Device Online Status), ולחץ „בדוק שוב”.' : 'התחבר ל-PDEG כדי לבדוק תקשורת.'}</span>`}</div>
     </section>
     <div class="summary">${Object.entries(counts).sort((x,y)=>KORDER[x[0]]-KORDER[y[0]]).map(([k,n])=>`<span class="pill"><b>${n}</b> ${KIND[k]}</span>`).join('')}</div>
     ${locs.map(loc => {
@@ -3779,13 +3780,33 @@ function renderDevices(m){
   $('#stRefresh').addEventListener('click', async () => {
     const btn=$('#stRefresh'); if(btn){ btn.disabled=true; btn.textContent='בודק…'; }
     try{ await GW.deviceStatus(); renderDevices(m); }
-    catch(e){ toast('בדיקת הסטטוס נכשלה: '+e.message, 6000); if(btn){ btn.disabled=false; btn.textContent='בדוק עכשיו'; } }
+    catch(e){ toast('בדיקת הסטטוס נכשלה: '+e.message, 6000); if(btn){ btn.disabled=false; btn.textContent='🔄 בדוק שוב'; } }
   });
   m.querySelectorAll('[data-stfilter]').forEach(b => b.addEventListener('click', () => { route.devFilter = route.devFilter===b.dataset.stfilter ? null : b.dataset.stfilter; renderDevices(m); }));
   $('#stClear') && $('#stClear').addEventListener('click', () => { route.devFilter=null; renderDevices(m); });
   for(const a in live) updateLive(+a);
 }
-function refreshDevStatusUI(){ document.querySelectorAll('[data-dk]').forEach(el => { const s = devStatus[el.dataset.dk]; if(s) el.dataset.st = s; }); }
+function refreshDevStatusUI(){
+  document.querySelectorAll('[data-dk]').forEach(el => { const s = devStatus[el.dataset.dk]; if(s) el.dataset.st = s; });
+  // keep the online/offline counts in the summary live, without a full re-render
+  const st = Object.values(devStatus), on = st.filter(s=>s==='online').length, off = st.filter(s=>s==='offline').length;
+  const onB = document.querySelector('[data-stfilter="online"] b'); if(onB) onB.textContent = on;
+  const offB = document.querySelector('[data-stfilter="offline"] b'); if(offB) offB.textContent = off;
+}
+// Sign-on check: read the controllers' online/offline status from the gateway (device_status) and refresh
+// the dots + counts. Runs automatically on connecting to a project, and from the "בדוק שוב" button.
+async function signOn(announce){
+  if(cfg.mode!=='pdeg' && cfg.mode!=='sim') return;
+  try{
+    const had = document.querySelector('[data-stfilter]');
+    await GW.deviceStatus();
+    if(route.tab==='devices' && !had) renderDevices($('#main'));   // first data → build the summary pills
+    else refreshDevStatusUI();                                     // otherwise update dots/counts in place
+    if(announce) toast('בדיקת תקשורת הושלמה', 2500);
+  }catch(e){ if(announce) toast('בדיקת תקשורת נכשלה: '+e.message, 5000); }
+}
+// On connect, controllers may report a moment after the link comes up — read a few times.
+function signOnBurst(){ signOn(); setTimeout(()=>signOn(), 2500); setTimeout(()=>signOn(), 6000); }
 function toggleOutput(t){
   const [duid, ch] = t.dataset.phys.split(':'); const dv = P.devices[duid];
   const on = t.getAttribute('aria-checked')!=='true';
