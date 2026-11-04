@@ -1547,7 +1547,7 @@ const Backend = {
 };
 
 "use strict";
-const BUILD_ID = "1104-1116";  // stamped by build.py so you can confirm which build is installed
+const BUILD_ID = "1104-1158";  // stamped by build.py so you can confirm which build is installed
 /* ───────── native bridge (Scriptable on iPhone) ─────────
    Inside Scriptable the page asks the host script to do things a web page can't:
    plain-HTTP requests to the PDEG without CORS, file pick/save, persistent storage. */
@@ -1851,6 +1851,7 @@ function setProject(p, buf){
   P = p; origDlj = buf || null;
   P.unsaved = false;                        // freshly loaded file has nothing unsaved yet
   openFolders.clear(); openDevs.clear(); checkedAreas.clear(); lastArea = null;   // new project opens fully collapsed
+  for(const k in devStatus) delete devStatus[k]; seenRound = null;   // reset online/offline counts per project (don't carry the previous project's devices)
   // Auto-target the gateway IP stored in the project (if any), so each project
   // connects to its own PDEG without the user retyping the address.
   if(p.conn && p.conn.ip){
